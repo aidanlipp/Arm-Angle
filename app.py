@@ -1,21 +1,27 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
-from utils.data_processing import process_arm_angles, fetch_player_stats
 
 def load_data():
     """Load and combine data from all CSV files in the data/raw directory"""
     data_path = Path("data/raw")
     dfs = []
     
+    # Add debug information
+    st.sidebar.subheader("Data Loading Status")
+    
     for csv_file in data_path.glob("arm_angles_*.csv"):
         year = csv_file.stem.split('_')[-1]  # Extract year from filename
-        df = pd.read_csv(csv_file)
-        if 'year' not in df.columns:
-            df['year'] = year
-        dfs.append(df)
+        try:
+            df = pd.read_csv(csv_file)
+            n_pitchers = df['pitcher'].nunique()
+            st.sidebar.write(f"✓ {csv_file.name}: {len(df)} rows, {n_pitchers} pitchers")
+            dfs.append(df)
+        except Exception as e:
+            st.sidebar.error(f"Error loading {csv_file.name}: {str(e)}")
     
     return pd.concat(dfs, ignore_index=True) if dfs else None
 
@@ -27,100 +33,74 @@ def main():
         df = load_data()
         
     if df is not None:
-        # Convert year to string for better display
-        df['year'] = df['year'].astype(str)
+        # Data validation checks
+        st.subheader("Data Validation")
         
-        # Basic data overview
-        st.subheader("Data Overview")
-        st.write(f"Number of unique pitchers: {df['pitcher'].nunique()}")
-        st.write(f"Years of data: {df['year'].min()} - {df['year'].max()}")
+        # Check for required columns
+        required_columns = ['pitcher', 'pitcher_name', 'year', 'pitch_hand', 
+                          'n_pitches', 'ball_angle', 'relative_release_ball_x', 
+                          'release_ball_z']
         
-        # Add filters
-        st.sidebar.header("Filters")
-        min_pitches = st.sidebar.slider(
-            "Minimum Pitches",
-            min_value=0,
-            max_value=int(df['n_pitches'].max()),
-            value=1000
-        )
+        missing_cols = [col for col in required_columns if col not in df.columns]
+        if missing_cols:
+            st.error(f"Missing required columns: {', '.join(missing_cols)}")
+            return
         
-        selected_years = st.sidebar.multiselect(
-            "Select Years",
-            options=sorted(df['year'].unique()),
-            default=sorted(df['year'].unique())
-        )
+        # Display basic data statistics
+        col1, col2, col3 = st.columns(3)
         
-        pitch_hand = st.sidebar.multiselect(
-            "Pitcher Handedness",
-            options=sorted(df['pitch_hand'].unique()),
-            default=sorted(df['pitch_hand'].unique())
-        )
+        with col1:
+            st.metric("Total Records", len(df))
+            st.metric("Unique Pitchers", df['pitcher'].nunique())
         
-        # Apply filters
-        filtered_df = df[
-            (df['n_pitches'] >= min_pitches) &
-            (df['year'].isin(selected_years)) &
-            (df['pitch_hand'].isin(pitch_hand))
-        ]
+        with col2:
+            st.metric("Year Range", f"{df['year'].min()} - {df['year'].max()}")
+            st.metric("Left-handed Pitchers", len(df[df['pitch_hand'] == 'L']['pitcher'].unique()))
         
-        # Create visualization of arm angle distribution
-        fig_dist = px.histogram(
-            filtered_df,
+        with col3:
+            st.metric("Average Pitches", int(df['n_pitches'].mean()))
+            st.metric("Right-handed Pitchers", len(df[df['pitch_hand'] == 'R']['pitcher'].unique()))
+        
+        # Show data distribution by year
+        yearly_counts = df.groupby('year').agg({
+            'pitcher': 'nunique',
+            'n_pitches': 'sum'
+        }).reset_index()
+        
+        yearly_counts.columns = ['Year', 'Number of Pitchers', 'Total Pitches']
+        st.subheader("Data Distribution by Year")
+        st.dataframe(yearly_counts)
+        
+        # Sample of raw data
+        st.subheader("Sample of Raw Data")
+        st.dataframe(df.head())
+        
+        # Distribution of arm angles
+        st.subheader("Arm Angle Distribution")
+        fig = px.histogram(
+            df,
             x="ball_angle",
-            color="year",
-            title="Distribution of Pitcher Arm Angles by Year",
+            color="pitch_hand",
+            title="Distribution of Arm Angles by Handedness",
             labels={"ball_angle": "Arm Angle", "count": "Number of Pitchers"},
             barmode="overlay",
             opacity=0.7
         )
-        st.plotly_chart(fig_dist)
+        st.plotly_chart(fig)
         
-        # Show average arm angle trends over time
-        yearly_avg = filtered_df.groupby(['year', 'pitch_hand'])['ball_angle'].mean().reset_index()
-        fig_trend = px.line(
-            yearly_avg,
-            x="year",
-            y="ball_angle",
-            color="pitch_hand",
-            title="Average Arm Angle Over Time by Handedness",
-            labels={"ball_angle": "Average Arm Angle", "year": "Year"},
-            markers=True
+        # Check for outliers or unusual values
+        st.subheader("Data Range Check")
+        numeric_cols = ['ball_angle', 'relative_release_ball_x', 'release_ball_z', 'n_pitches']
+        stats_df = df[numeric_cols].describe()
+        st.dataframe(stats_df)
+        
+        # Allow downloading the combined dataset
+        st.download_button(
+            label="Download combined data as CSV",
+            data=df.to_csv(index=False).encode('utf-8'),
+            file_name='combined_arm_angles.csv',
+            mime='text/csv'
         )
-        st.plotly_chart(fig_trend)
-        
-        # Allow user to select specific pitchers to analyze
-        selected_pitchers = st.multiselect(
-            "Select pitchers to analyze",
-            options=sorted(filtered_df['pitcher_name'].unique())
-        )
-        
-        if selected_pitchers:
-            pitcher_data = filtered_df[filtered_df['pitcher_name'].isin(selected_pitchers)]
-            
-            # Create line plot for selected pitchers
-            fig_pitchers = px.line(
-                pitcher_data,
-                x="year",
-                y="ball_angle",
-                color="pitcher_name",
-                title="Arm Angle Trends for Selected Pitchers",
-                labels={"ball_angle": "Arm Angle", "year": "Year"},
-                markers=True
-            )
-            st.plotly_chart(fig_pitchers)
-            
-            # Show detailed stats for selected pitchers
-            st.subheader("Detailed Statistics")
-            stats_df = pitcher_data.groupby(['pitcher_name', 'year', 'pitch_hand']).agg({
-                'ball_angle': 'mean',
-                'n_pitches': 'sum',
-                'relative_release_ball_x': 'mean',
-                'release_ball_z': 'mean'
-            }).round(2)
-            st.dataframe(stats_df)
-    
-    else:
-        st.error("No data files found in data/raw directory. Please ensure CSV files are present.")
 
 if __name__ == "__main__":
     main()
