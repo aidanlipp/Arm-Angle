@@ -4,26 +4,54 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
+import os
 
 def load_data():
     """Load and combine data from all CSV files in the data/raw directory"""
+    # Print current working directory
+    st.sidebar.write("Current working directory:", os.getcwd())
+    
+    # Construct data path
     data_path = Path("data/raw")
+    st.sidebar.write("Looking for data in:", data_path.absolute())
+    
+    # Check if directory exists
+    if not data_path.exists():
+        st.sidebar.error(f"Directory not found: {data_path.absolute()}")
+        return None
+    
+    # List all files in directory
+    st.sidebar.write("Files found in directory:")
+    for file in data_path.glob("*"):
+        st.sidebar.write(f"- {file.name}")
+    
     dfs = []
-    
-    # Add debug information
-    st.sidebar.subheader("Data Loading Status")
-    
-    for csv_file in data_path.glob("arm_angles_*.csv"):
-        year = csv_file.stem.split('_')[-1]  # Extract year from filename
+    # Updated file pattern to match your naming convention
+    for csv_file in data_path.glob("ArmAngles*.csv"):
+        # Extract year from filename (20, 21, etc.)
+        year = csv_file.stem[-2:]  
+        full_year = f"20{year}"  # Convert to full year (2020, 2021, etc.)
+        
         try:
             df = pd.read_csv(csv_file)
             n_pitchers = df['pitcher'].nunique()
-            st.sidebar.write(f"✓ {csv_file.name}: {len(df)} rows, {n_pitchers} pitchers")
+            st.sidebar.success(f"✓ Loaded {csv_file.name}: {len(df)} rows, {n_pitchers} pitchers")
+            
+            # Make sure we have a year column
+            if 'year' not in df.columns:
+                df['year'] = full_year
+                
             dfs.append(df)
         except Exception as e:
             st.sidebar.error(f"Error loading {csv_file.name}: {str(e)}")
     
-    return pd.concat(dfs, ignore_index=True) if dfs else None
+    if not dfs:
+        st.sidebar.error("No data files were loaded!")
+        return None
+        
+    combined_df = pd.concat(dfs, ignore_index=True)
+    st.sidebar.success(f"Successfully loaded {len(dfs)} files with {len(combined_df)} total rows")
+    return combined_df
 
 def main():
     st.title("Pitcher Arm Angle Analysis")
@@ -31,22 +59,13 @@ def main():
     # Load data from repository
     with st.spinner("Loading data..."):
         df = load_data()
-        
+    
     if df is not None:
-        # Data validation checks
-        st.subheader("Data Validation")
+        # Convert year to string for better display
+        df['year'] = df['year'].astype(str)
         
-        # Check for required columns
-        required_columns = ['pitcher', 'pitcher_name', 'year', 'pitch_hand', 
-                          'n_pitches', 'ball_angle', 'relative_release_ball_x', 
-                          'release_ball_z']
-        
-        missing_cols = [col for col in required_columns if col not in df.columns]
-        if missing_cols:
-            st.error(f"Missing required columns: {', '.join(missing_cols)}")
-            return
-        
-        # Display basic data statistics
+        # Basic data overview
+        st.subheader("Data Overview")
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -61,20 +80,6 @@ def main():
             st.metric("Average Pitches", int(df['n_pitches'].mean()))
             st.metric("Right-handed Pitchers", len(df[df['pitch_hand'] == 'R']['pitcher'].unique()))
         
-        # Show data distribution by year
-        yearly_counts = df.groupby('year').agg({
-            'pitcher': 'nunique',
-            'n_pitches': 'sum'
-        }).reset_index()
-        
-        yearly_counts.columns = ['Year', 'Number of Pitchers', 'Total Pitches']
-        st.subheader("Data Distribution by Year")
-        st.dataframe(yearly_counts)
-        
-        # Sample of raw data
-        st.subheader("Sample of Raw Data")
-        st.dataframe(df.head())
-        
         # Distribution of arm angles
         st.subheader("Arm Angle Distribution")
         fig = px.histogram(
@@ -88,19 +93,15 @@ def main():
         )
         st.plotly_chart(fig)
         
-        # Check for outliers or unusual values
-        st.subheader("Data Range Check")
-        numeric_cols = ['ball_angle', 'relative_release_ball_x', 'release_ball_z', 'n_pitches']
-        stats_df = df[numeric_cols].describe()
-        st.dataframe(stats_df)
-        
-        # Allow downloading the combined dataset
-        st.download_button(
-            label="Download combined data as CSV",
-            data=df.to_csv(index=False).encode('utf-8'),
-            file_name='combined_arm_angles.csv',
-            mime='text/csv'
-        )
+        # Show data statistics
+        st.subheader("Yearly Statistics")
+        yearly_stats = df.groupby('year').agg({
+            'pitcher': 'nunique',
+            'n_pitches': 'sum',
+            'ball_angle': ['mean', 'std']
+        }).round(2)
+        yearly_stats.columns = ['Number of Pitchers', 'Total Pitches', 'Avg Arm Angle', 'Std Arm Angle']
+        st.dataframe(yearly_stats)
 
 if __name__ == "__main__":
     main()
