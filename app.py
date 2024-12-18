@@ -7,8 +7,9 @@ from pathlib import Path
 import requests
 import time
 import json
+from bs4 import BeautifulSoup
 
-def load_data():
+def load_arm_angle_data():
     """Load and combine data from all CSV files in the data/raw directory"""
     data_path = Path("data/raw")
     dfs = []
@@ -41,7 +42,8 @@ def load_data():
 
 def fetch_pitcher_stats(player_id, year):
     """Fetch pitching stats from Baseball Savant"""
-    url = f"https://baseballsavant.mlb.com/savant-player/{player_id}"
+    # Use statcast search endpoint instead of player page
+    url = f"https://baseballsavant.mlb.com/statcast_search/csv?all=true&player_id={player_id}&year={year}&game_type=R"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
@@ -51,23 +53,31 @@ def fetch_pitcher_stats(player_id, year):
         response = requests.get(url, headers=headers)
         
         if response.status_code == 200:
-            # Process the response here
+            # Parse CSV data
+            df = pd.read_csv(pd.StringIO(response.text))
+            
+            # Get games and games started
+            games = df['game_pk'].nunique()
+            games_started = df[df['inning'] == 1].groupby('game_pk')['game_pk'].first().count()
+            
             return {
                 'player_id': player_id,
                 'year': year,
-                'games': 0,  # Placeholder
-                'games_started': 0  # Placeholder
+                'games': games,
+                'games_started': games_started,
+                'role': 'Starter' if (games_started / games >= 0.6) else 'Reliever' if games > 0 else 'Unknown'
             }
+            
         return None
     except Exception as e:
-        st.error(f"Error fetching stats for player {player_id}: {str(e)}")
+        st.warning(f"Error fetching stats for player {player_id}: {str(e)}")
         return None
 
 def main():
     st.title("Pitcher Arm Angle Analysis")
     
     # Load the arm angle data
-    df = load_data()
+    df = load_arm_angle_data()
     
     if df is not None:
         # Convert year to string for better display
@@ -91,37 +101,63 @@ def main():
         
         # Add a button to start scraping
         if st.button("Fetch Pitcher Role Data"):
-            with st.spinner("Fetching pitcher statistics..."):
-                # Get a sample of pitchers to test
-                sample_pitchers = df[['pitcher', 'year']].drop_duplicates().head(5)
+            roles_data = []
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            # Get unique pitcher-year combinations
+            pitcher_years = df[['pitcher', 'year', 'pitcher_name']].drop_duplicates()
+            total_pitchers = len(pitcher_years)
+            
+            for idx, row in pitcher_years.iterrows():
+                progress = (idx + 1) / total_pitchers
+                progress_bar.progress(progress)
+                status_text.text(f"Processing pitcher {idx + 1} of {total_pitchers}: {row['pitcher_name']}")
                 
-                for _, row in sample_pitchers.iterrows():
-                    stats = fetch_pitcher_stats(row['pitcher'], row['year'])
-                    if stats:
-                        st.write(f"Retrieved stats for pitcher {row['pitcher']}")
-        
-        # Basic distribution visualization
-        st.header("Arm Angle Distribution")
-        fig = px.histogram(
-            df,
-            x="ball_angle",
-            color="pitch_hand",
-            title="Distribution of Arm Angles by Handedness",
-            labels={"ball_angle": "Arm Angle", "count": "Number of Pitchers"},
-            barmode="overlay",
-            opacity=0.7
-        )
-        st.plotly_chart(fig)
-        
-        # Yearly statistics
-        st.header("Yearly Statistics")
-        yearly_stats = df.groupby('year').agg({
-            'pitcher': 'nunique',
-            'n_pitches': 'sum',
-            'ball_angle': ['mean', 'std']
-        }).round(2)
-        yearly_stats.columns = ['Number of Pitchers', 'Total Pitches', 'Avg Arm Angle', 'Std Arm Angle']
-        st.dataframe(yearly_stats)
+                stats = fetch_pitcher_stats(row['pitcher'], row['year'])
+                if stats:
+                    roles_data.append(stats)
+                    st.write(f"Retrieved stats for {row['pitcher_name']}: {stats['games']} games, {stats['games_started']} starts - {stats['role']}")
+            
+            # Create roles DataFrame
+            roles_df = pd.DataFrame(roles_data)
+            
+            # Merge with original data
+            df = df.merge(roles_df[['player_id', 'year', 'role']], 
+                         left_on=['pitcher', 'year'],
+                         right_on=['player_id', 'year'],
+                         how='left')
+            
+            # Update visualization with roles
+            fig = px.histogram(
+                df,
+                x="ball_angle",
+                color="role",
+                facet_col="pitch_hand",
+                title="Distribution of Arm Angles by Role and Handedness",
+                labels={"ball_angle": "Arm Angle", "count": "Number of Pitchers"},
+                barmode="overlay",
+                opacity=0.7
+            )
+            st.plotly_chart(fig)
+            
+            # Show role statistics
+            st.header("Role Statistics")
+            role_stats = df.groupby(['pitch_hand', 'role'])['ball_angle'].agg(['count', 'mean', 'std']).round(2)
+            st.dataframe(role_stats)
+            
+        else:
+            # Show basic distribution without roles
+            fig = px.histogram(
+                df,
+                x="ball_angle",
+                color="pitch_hand",
+                title="Distribution of Arm Angles by Handedness",
+                labels={"ball_angle": "Arm Angle", "count": "Number of Pitchers"},
+                barmode="overlay",
+                opacity=0.7
+            )
+            st.plotly_chart(fig)
 
 if __name__ == "__main__":
     main()
