@@ -1,163 +1,184 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
+import numpy as np
 from pathlib import Path
-import requests
-import time
-import json
-from bs4 import BeautifulSoup
 
-def load_arm_angle_data():
-    """Load and combine data from all CSV files in the data/raw directory"""
-    data_path = Path("data/raw")
+def load_all_seasons():
+    """Load all processed seasons of data"""
+    data_path = Path("data/processed")
+    seasons = range(20, 25)
     dfs = []
     
-    # List all files in directory
-    st.sidebar.write("Loading files from:", data_path)
+    # Print loading status
+    st.sidebar.write("Loading data files:")
     
-    for csv_file in data_path.glob("ArmAngles*.csv"):
-        year = csv_file.stem[-2:]  # Extract year (20, 21, etc.)
-        full_year = f"20{year}"    # Convert to full year (2020, 2021, etc.)
-        
+    for year in seasons:
         try:
-            df = pd.read_csv(csv_file)
-            n_pitchers = df['pitcher'].nunique()
-            st.sidebar.success(f"✓ Loaded {csv_file.name}: {len(df)} rows, {n_pitchers} pitchers")
-            
-            # Make sure we have a year column
-            if 'year' not in df.columns:
-                df['year'] = full_year
-                
+            file_path = data_path / f'ArmAngles{year}_complete.csv'
+            df = pd.read_csv(file_path)
+            df['year'] = f'20{year}'
             dfs.append(df)
+            st.sidebar.success(f"✓ Loaded 20{year} data")
         except Exception as e:
-            st.sidebar.error(f"Error loading {csv_file.name}: {str(e)}")
+            st.sidebar.error(f"Error loading 20{year} data: {e}")
     
     if not dfs:
-        st.sidebar.error("No data files were loaded!")
         return None
         
-    return pd.concat(dfs, ignore_index=True)
+    combined_df = pd.concat(dfs, ignore_index=True)
+    st.sidebar.info(f"Total records loaded: {len(combined_df)}")
+    return combined_df
 
-def fetch_pitcher_stats(player_id, year):
-    """Fetch pitching stats from Baseball Savant"""
-    # Use statcast search endpoint instead of player page
-    url = f"https://baseballsavant.mlb.com/statcast_search/csv?all=true&player_id={player_id}&year={year}&game_type=R"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
+def create_angle_buckets(df, bucket_size):
+    """Create arm angle buckets of specified size"""
+    min_angle = np.floor(df['ball_angle'].min() / bucket_size) * bucket_size
+    max_angle = np.ceil(df['ball_angle'].max() / bucket_size) * bucket_size
     
-    try:
-        time.sleep(1)  # Rate limiting
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code == 200:
-            # Parse CSV data
-            df = pd.read_csv(pd.StringIO(response.text))
-            
-            # Get games and games started
-            games = df['game_pk'].nunique()
-            games_started = df[df['inning'] == 1].groupby('game_pk')['game_pk'].first().count()
-            
-            return {
-                'player_id': player_id,
-                'year': year,
-                'games': games,
-                'games_started': games_started,
-                'role': 'Starter' if (games_started / games >= 0.6) else 'Reliever' if games > 0 else 'Unknown'
-            }
-            
-        return None
-    except Exception as e:
-        st.warning(f"Error fetching stats for player {player_id}: {str(e)}")
-        return None
+    df['angle_bucket'] = pd.cut(
+        df['ball_angle'],
+        bins=np.arange(min_angle, max_angle + bucket_size, bucket_size),
+        labels=[f"{i} to {i + bucket_size}" for i in np.arange(min_angle, max_angle, bucket_size)]
+    )
+    return df
+
+def calculate_bucket_stats(df):
+    """Calculate average stats for each bucket"""
+    stats = [
+        'k_percent', 'bb_percent', 'whiff_percent',
+        'barrel_percent', 'hard_hit_percent', 'xwoba'
+    ]
+    
+    return df.groupby('angle_bucket')[stats].agg(['mean', 'count', 'std']).round(2)
 
 def main():
     st.title("Pitcher Arm Angle Analysis")
     
-    # Load the arm angle data
-    df = load_arm_angle_data()
+    # Load data from processed directory
+    data = load_all_seasons()
+    if data is None:
+        st.error("No data available. Please check the data/processed directory.")
+        return
     
-    if df is not None:
-        # Convert year to string for better display
-        df['year'] = df['year'].astype(str)
-        
-        # Basic data overview
-        st.header("Data Overview")
-        col1, col2, col3 = st.columns(3)
-        
+    # Sidebar controls
+    st.sidebar.header("Controls")
+    
+    # Year filter
+    available_years = sorted(data['year'].unique())
+    selected_years = st.sidebar.multiselect(
+        "Select Years",
+        options=available_years,
+        default=available_years
+    )
+    
+    # Filter by selected years
+    data = data[data['year'].isin(selected_years)]
+    
+    # Bucket size selection
+    bucket_size = st.sidebar.radio(
+        "Select Bucket Size",
+        options=[5, 10, 15],
+        help="Size of arm angle groupings in degrees"
+    )
+    
+    # Create buckets
+    data_with_buckets = create_angle_buckets(data, bucket_size)
+    
+    # Calculate stats by bucket
+    bucket_stats = calculate_bucket_stats(data_with_buckets)
+    
+    # Available metrics
+    metrics = {
+        'K%': 'k_percent',
+        'BB%': 'bb_percent',
+        'Whiff%': 'whiff_percent',
+        'Barrel%': 'barrel_percent',
+        'Hard Hit%': 'hard_hit_percent',
+        'xwOBA': 'xwoba'
+    }
+    
+    # Create tabs for different visualization types
+    tab1, tab2 = st.tabs(["Individual Metrics", "Combined View"])
+    
+    with tab1:
+        col1, col2 = st.columns([3, 1])
         with col1:
-            st.metric("Total Records", len(df))
-            st.metric("Unique Pitchers", df['pitcher'].nunique())
+            # Individual metric selection
+            selected_metric = st.selectbox(
+                "Select Metric to Display",
+                options=list(metrics.keys())
+            )
         
         with col2:
-            st.metric("Year Range", f"{df['year'].min()} - {df['year'].max()}")
-            st.metric("Left-handed Pitchers", len(df[df['pitch_hand'] == 'L']['pitcher'].unique()))
-        
-        with col3:
-            st.metric("Average Pitches", int(df['n_pitches'].mean()))
-            st.metric("Right-handed Pitchers", len(df[df['pitch_hand'] == 'R']['pitcher'].unique()))
-        
-        # Add a button to start scraping
-        if st.button("Fetch Pitcher Role Data"):
-            roles_data = []
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # Get unique pitcher-year combinations
-            pitcher_years = df[['pitcher', 'year', 'pitcher_name']].drop_duplicates()
-            total_pitchers = len(pitcher_years)
-            
-            for idx, row in pitcher_years.iterrows():
-                progress = (idx + 1) / total_pitchers
-                progress_bar.progress(progress)
-                status_text.text(f"Processing pitcher {idx + 1} of {total_pitchers}: {row['pitcher_name']}")
-                
-                stats = fetch_pitcher_stats(row['pitcher'], row['year'])
-                if stats:
-                    roles_data.append(stats)
-                    st.write(f"Retrieved stats for {row['pitcher_name']}: {stats['games']} games, {stats['games_started']} starts - {stats['role']}")
-            
-            # Create roles DataFrame
-            roles_df = pd.DataFrame(roles_data)
-            
-            # Merge with original data
-            df = df.merge(roles_df[['player_id', 'year', 'role']], 
-                         left_on=['pitcher', 'year'],
-                         right_on=['player_id', 'year'],
-                         how='left')
-            
-            # Update visualization with roles
-            fig = px.histogram(
-                df,
-                x="ball_angle",
-                color="role",
-                facet_col="pitch_hand",
-                title="Distribution of Arm Angles by Role and Handedness",
-                labels={"ball_angle": "Arm Angle", "count": "Number of Pitchers"},
-                barmode="overlay",
-                opacity=0.7
+            # Display type selection
+            plot_type = st.selectbox(
+                "Plot Type",
+                options=["Box Plot", "Violin Plot", "Bar Plot"]
             )
-            st.plotly_chart(fig)
-            
-            # Show role statistics
-            st.header("Role Statistics")
-            role_stats = df.groupby(['pitch_hand', 'role'])['ball_angle'].agg(['count', 'mean', 'std']).round(2)
-            st.dataframe(role_stats)
-            
-        else:
-            # Show basic distribution without roles
-            fig = px.histogram(
-                df,
-                x="ball_angle",
-                color="pitch_hand",
-                title="Distribution of Arm Angles by Handedness",
-                labels={"ball_angle": "Arm Angle", "count": "Number of Pitchers"},
-                barmode="overlay",
-                opacity=0.7
+        
+        # Create visualization based on selected type
+        metric_col = metrics[selected_metric]
+        
+        if plot_type == "Box Plot":
+            fig = px.box(
+                data_with_buckets,
+                x='angle_bucket',
+                y=metric_col,
+                title=f"{selected_metric} by Arm Angle ({bucket_size}° buckets)",
+                color='year' if len(selected_years) > 1 else None
             )
-            st.plotly_chart(fig)
+        elif plot_type == "Violin Plot":
+            fig = px.violin(
+                data_with_buckets,
+                x='angle_bucket',
+                y=metric_col,
+                title=f"{selected_metric} by Arm Angle ({bucket_size}° buckets)",
+                color='year' if len(selected_years) > 1 else None
+            )
+        else:  # Bar Plot
+            avg_data = data_with_buckets.groupby('angle_bucket')[metric_col].mean().reset_index()
+            fig = px.bar(
+                avg_data,
+                x='angle_bucket',
+                y=metric_col,
+                title=f"Average {selected_metric} by Arm Angle ({bucket_size}° buckets)"
+            )
+        
+        fig.update_layout(
+            xaxis_title="Arm Angle Range (degrees)",
+            yaxis_title=selected_metric
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Show summary statistics
+        st.subheader(f"Summary Statistics for {selected_metric}")
+        summary_stats = bucket_stats[metric_col].round(2)
+        st.dataframe(summary_stats)
+    
+    with tab2:
+        # Create small multiples view of all metrics
+        cols = st.columns(2)
+        for idx, (metric_name, metric_col) in enumerate(metrics.items()):
+            fig = px.box(
+                data_with_buckets,
+                x='angle_bucket',
+                y=metric_col,
+                title=f"{metric_name} by Arm Angle",
+                color='year' if len(selected_years) > 1 else None
+            )
+            
+            fig.update_layout(
+                height=400,
+                xaxis_title="Arm Angle Range",
+                yaxis_title=metric_name
+            )
+            
+            cols[idx % 2].plotly_chart(fig, use_container_width=True)
+        
+        # Show data table with all metrics
+        st.subheader("Complete Statistics by Arm Angle")
+        st.dataframe(bucket_stats)
 
 if __name__ == "__main__":
     main()
