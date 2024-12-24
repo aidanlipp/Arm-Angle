@@ -4,20 +4,25 @@ import plotly.express as px
 import numpy as np
 from pathlib import Path
 
-def load_all_seasons():
-    """Load all processed seasons of data"""
+def load_and_validate_data():
+    """Load data and perform validation checks"""
     data_path = Path("data/processed")
-    seasons = range(20, 25)
     dfs = []
     
     # Print loading status
-    st.sidebar.write("Loading data files:")
+    st.sidebar.write("Loading and validating data:")
     
-    for year in seasons:
+    for year in range(20, 25):
         try:
             file_path = data_path / f'ArmAngles{year}_complete.csv'
             df = pd.read_csv(file_path)
             df['year'] = f'20{year}'
+            
+            # Log suspicious values
+            suspicious = df[df['ball_angle'].abs() > 60]
+            if not suspicious.empty:
+                st.sidebar.warning(f"Found {len(suspicious)} suspicious arm angles in 20{year}")
+                
             dfs.append(df)
             st.sidebar.success(f"✓ Loaded 20{year} data")
         except Exception as e:
@@ -27,38 +32,30 @@ def load_all_seasons():
         return None
         
     combined_df = pd.concat(dfs, ignore_index=True)
-    st.sidebar.info(f"Total records loaded: {len(combined_df)}")
+    
+    # Display data statistics
+    st.sidebar.info(f"Arm Angle Range: {combined_df['ball_angle'].min():.1f}° to {combined_df['ball_angle'].max():.1f}°")
+    
     return combined_df
-
-def create_angle_buckets(df, bucket_size):
-    """Create arm angle buckets of specified size"""
-    min_angle = np.floor(df['ball_angle'].min() / bucket_size) * bucket_size
-    max_angle = np.ceil(df['ball_angle'].max() / bucket_size) * bucket_size
-    
-    df['angle_bucket'] = pd.cut(
-        df['ball_angle'],
-        bins=np.arange(min_angle, max_angle + bucket_size, bucket_size),
-        labels=[f"{i} to {i + bucket_size}" for i in np.arange(min_angle, max_angle, bucket_size)]
-    )
-    return df
-
-def calculate_bucket_stats(df):
-    """Calculate average stats for each bucket"""
-    stats = [
-        'k_percent', 'bb_percent', 'whiff_percent',
-        'barrel_percent', 'hard_hit_percent', 'xwoba'
-    ]
-    
-    return df.groupby('angle_bucket')[stats].agg(['mean', 'count', 'std']).round(2)
 
 def main():
     st.title("Pitcher Arm Angle Analysis")
     
-    # Load data from processed directory
-    data = load_all_seasons()
+    # Load and validate data
+    data = load_and_validate_data()
     if data is None:
         st.error("No data available. Please check the data/processed directory.")
         return
+    
+    # Show data validation section
+    st.subheader("Data Overview")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Pitchers", len(data))
+    with col2:
+        st.metric("Median Arm Angle", f"{data['ball_angle'].median():.1f}°")
+    with col3:
+        st.metric("Unusual Angles", len(data[data['ball_angle'].abs() > 60]))
     
     # Sidebar controls
     st.sidebar.header("Controls")
@@ -74,19 +71,6 @@ def main():
     # Filter by selected years
     data = data[data['year'].isin(selected_years)]
     
-    # Bucket size selection
-    bucket_size = st.sidebar.radio(
-        "Select Bucket Size",
-        options=[5, 10, 15],
-        help="Size of arm angle groupings in degrees"
-    )
-    
-    # Create buckets
-    data_with_buckets = create_angle_buckets(data, bucket_size)
-    
-    # Calculate stats by bucket
-    bucket_stats = calculate_bucket_stats(data_with_buckets)
-    
     # Available metrics
     metrics = {
         'K%': 'k_percent',
@@ -97,88 +81,46 @@ def main():
         'xwOBA': 'xwoba'
     }
     
-    # Create tabs for different visualization types
-    tab1, tab2 = st.tabs(["Individual Metrics", "Combined View"])
+    # Metric selection
+    selected_metric = st.selectbox(
+        "Select Metric to Display",
+        options=list(metrics.keys())
+    )
     
-    with tab1:
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            # Individual metric selection
-            selected_metric = st.selectbox(
-                "Select Metric to Display",
-                options=list(metrics.keys())
-            )
-        
-        with col2:
-            # Display type selection
-            plot_type = st.selectbox(
-                "Plot Type",
-                options=["Box Plot", "Violin Plot", "Bar Plot"]
-            )
-        
-        # Create visualization based on selected type
-        metric_col = metrics[selected_metric]
-        
-        if plot_type == "Box Plot":
-            fig = px.box(
-                data_with_buckets,
-                x='angle_bucket',
-                y=metric_col,
-                title=f"{selected_metric} by Arm Angle ({bucket_size}° buckets)",
-                color='year' if len(selected_years) > 1 else None
-            )
-        elif plot_type == "Violin Plot":
-            fig = px.violin(
-                data_with_buckets,
-                x='angle_bucket',
-                y=metric_col,
-                title=f"{selected_metric} by Arm Angle ({bucket_size}° buckets)",
-                color='year' if len(selected_years) > 1 else None
-            )
-        else:  # Bar Plot
-            avg_data = data_with_buckets.groupby('angle_bucket')[metric_col].mean().reset_index()
-            fig = px.bar(
-                avg_data,
-                x='angle_bucket',
-                y=metric_col,
-                title=f"Average {selected_metric} by Arm Angle ({bucket_size}° buckets)"
-            )
-        
-        fig.update_layout(
-            xaxis_title="Arm Angle Range (degrees)",
-            yaxis_title=selected_metric
+    # Create scatter plot
+    fig = px.scatter(
+        data,
+        x='ball_angle',
+        y=metrics[selected_metric],
+        color='year' if len(selected_years) > 1 else None,
+        title=f"{selected_metric} vs Arm Angle",
+        labels={
+            'ball_angle': 'Arm Angle (degrees)',
+            metrics[selected_metric]: selected_metric
+        },
+        trendline="lowess",  # Add smoothed trendline
+    )
+    
+    # Update layout
+    fig.update_layout(
+        xaxis_title="Arm Angle (degrees)",
+        yaxis_title=selected_metric,
+        showlegend=True
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Add data filters for unusual values
+    st.subheader("Data Filters")
+    show_unusual = st.checkbox("Show pitchers with unusual arm angles")
+    if show_unusual:
+        unusual_data = data[data['ball_angle'].abs() > 60].sort_values('ball_angle')
+        st.dataframe(
+            unusual_data[['pitcher_name', 'year', 'ball_angle'] + list(metrics.values())],
+            use_container_width=True
         )
         
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Show summary statistics
-        st.subheader(f"Summary Statistics for {selected_metric}")
-        summary_stats = bucket_stats[metric_col].round(2)
-        st.dataframe(summary_stats)
-    
-    with tab2:
-        # Create small multiples view of all metrics
-        cols = st.columns(2)
-        for idx, (metric_name, metric_col) in enumerate(metrics.items()):
-            fig = px.box(
-                data_with_buckets,
-                x='angle_bucket',
-                y=metric_col,
-                title=f"{metric_name} by Arm Angle",
-                color='year' if len(selected_years) > 1 else None
-            )
-            
-            fig.update_layout(
-                height=400,
-                xaxis_title="Arm Angle Range",
-                yaxis_title=metric_name
-            )
-            
-            cols[idx % 2].plotly_chart(fig, use_container_width=True)
-        
-        # Show data table with all metrics
-        st.subheader("Complete Statistics by Arm Angle")
-        st.dataframe(bucket_stats)
+        st.info("These unusual values might need to be investigated for data quality issues.")
 
 if __name__ == "__main__":
     main()
