@@ -28,6 +28,40 @@ def create_angle_buckets(df, bucket_size):
     
     return df
 
+def load_and_validate_data():
+    """Load and validate data from processed directory"""
+    data_path = Path("data/processed")
+    dfs = []
+    
+    for year in range(20, 25):
+        try:
+            file_path = data_path / f'ArmAngles{year}_complete.csv'
+            if file_path.exists():
+                df = pd.read_csv(file_path)
+                df['year'] = f'20{year}'
+                dfs.append(df)
+                st.sidebar.success(f"✓ Loaded 20{year} data")
+            else:
+                st.sidebar.warning(f"File not found: {file_path}")
+        except Exception as e:
+            st.sidebar.error(f"Error loading 20{year} data: {e}")
+    
+    if not dfs:
+        return None
+        
+    combined_df = pd.concat(dfs, ignore_index=True)
+    
+    # Add data summary
+    st.sidebar.subheader("Data Summary")
+    st.sidebar.write(f"Total Records: {len(combined_df)}")
+    st.sidebar.write(f"Years: {', '.join(sorted(combined_df['year'].unique()))}")
+    st.sidebar.write(f"Angle Range: {combined_df['ball_angle'].min():.1f}° to {combined_df['ball_angle'].max():.1f}°")
+    
+    return combined_df
+
+
+
+
 def get_empty_buckets(df, metric):
     """Identify buckets with no data"""
     bucket_counts = df.groupby(['year', 'angle_bucket']).size().unstack(fill_value=0)
