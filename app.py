@@ -1,63 +1,24 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import numpy as np
 from pathlib import Path
 
-def load_and_validate_data():
-    """Load data and perform validation checks"""
-    data_path = Path("data/processed")
-    dfs = []
-    
-    # Print loading status
-    st.sidebar.write("Loading and validating data:")
-    
-    for year in range(20, 25):
-        try:
-            file_path = data_path / f'ArmAngles{year}_complete.csv'
-            df = pd.read_csv(file_path)
-            df['year'] = f'20{year}'
-            
-            # Log suspicious values
-            suspicious = df[df['ball_angle'] < 0]  # Only flag negative angles
-            if not suspicious.empty:
-                st.sidebar.warning(f"Found {len(suspicious)} negative arm angles in 20{year}")
-                
-            dfs.append(df)
-            st.sidebar.success(f"✓ Loaded 20{year} data")
-        except Exception as e:
-            st.sidebar.error(f"Error loading 20{year} data: {e}")
-    
-    if not dfs:
-        return None
-        
-    combined_df = pd.concat(dfs, ignore_index=True)
-    
-    # Display actual data range
-    min_angle = combined_df['ball_angle'].min()
-    max_angle = combined_df['ball_angle'].max()
-    st.sidebar.info(f"Actual Arm Angle Range: {min_angle:.1f}° to {max_angle:.1f}°")
-    
-    return combined_df
-
 def create_angle_buckets(df, bucket_size):
     """Create arm angle buckets based on actual data range"""
-    # Get actual min and max values
     min_angle = df['ball_angle'].min()
     max_angle = df['ball_angle'].max()
     
-    # Create bucket edges based on actual data
     bucket_edges = np.arange(
         np.floor(min_angle / bucket_size) * bucket_size,
         np.ceil(max_angle / bucket_size) * bucket_size + bucket_size,
         bucket_size
     )
     
-    # Create bucket labels
     bucket_labels = [f"{edge:.0f} to {edge + bucket_size:.0f}" 
                     for edge in bucket_edges[:-1]]
     
-    # Add bucket column
     df['angle_bucket'] = pd.cut(
         df['ball_angle'],
         bins=bucket_edges,
@@ -67,111 +28,136 @@ def create_angle_buckets(df, bucket_size):
     
     return df
 
-def main():
-    st.title("Pitcher Arm Angle Analysis")
+def get_empty_buckets(df, metric):
+    """Identify buckets with no data"""
+    bucket_counts = df.groupby(['year', 'angle_bucket']).size().unstack(fill_value=0)
+    empty_buckets = bucket_counts.columns[bucket_counts.sum() == 0]
+    return empty_buckets
+
+def create_visualization(data, metric_name, metric_col, plot_type, bucket_size=None):
+    """Create visualization with league average line"""
     
-    # Load data
-    data = load_and_validate_data()
-    if data is None:
-        st.error("No data available. Please check the data/processed directory.")
-        return
-    
-    # Show data validation
-    st.subheader("Data Overview")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Pitchers", len(data))
-    with col2:
-        st.metric("Median Arm Angle", f"{data['ball_angle'].median():.1f}°")
-    with col3:
-        st.metric("Negative Angles", len(data[data['ball_angle'] < 0]))
-    
-    # Sidebar controls
-    st.sidebar.header("Controls")
-    
-    # Year filter
-    available_years = sorted(data['year'].unique())
-    selected_years = st.sidebar.multiselect(
-        "Select Years",
-        options=available_years,
-        default=available_years
-    )
-    
-    # Filter by selected years
-    data = data[data['year'].isin(selected_years)]
-    
-    # Metrics
-    metrics = {
-        'K%': 'k_percent',
-        'BB%': 'bb_percent',
-        'Whiff%': 'whiff_percent',
-        'Barrel%': 'barrel_percent',
-        'Hard Hit%': 'hard_hit_percent',
-        'xwOBA': 'xwoba'
-    }
-    
-    # Plot controls
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        selected_metric = st.selectbox(
-            "Select Metric",
-            options=list(metrics.keys())
-        )
-    with col2:
-        plot_type = st.selectbox(
-            "Plot Type",
-            options=["Scatter", "Box Plot", "Bar Chart"]
-        )
-    
-    # Create visualization
     if plot_type == "Scatter":
         fig = px.scatter(
             data,
             x='ball_angle',
-            y=metrics[selected_metric],
-            color='year' if len(selected_years) > 1 else None,
-            title=f"{selected_metric} vs Arm Angle",
-            labels={
-                'ball_angle': 'Arm Angle (degrees)',
-                metrics[selected_metric]: selected_metric
-            }
+            y=metric_col,
+            color='year',
+            title=f"{metric_name} vs Arm Angle"
         )
+        
+        # Add league average line
+        league_avg = data[metric_col].mean()
+        fig.add_hline(
+            y=league_avg,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"League Avg: {league_avg:.1f}",
+            annotation_position="bottom right"
+        )
+        
     else:
-        # Create buckets for box plot or bar chart
-        bucket_size = st.slider("Bucket Size (degrees)", 5, 15, 10, 5)
-        data_with_buckets = create_angle_buckets(data, bucket_size)
+        data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
+        
+        # Remove empty buckets and note them
+        empty_buckets = get_empty_buckets(data_with_buckets, metric_col)
+        if not empty_buckets.empty:
+            empty_bucket_note = "Empty buckets: " + ", ".join(empty_buckets)
+            data_with_buckets = data_with_buckets[~data_with_buckets['angle_bucket'].isin(empty_buckets)]
         
         if plot_type == "Box Plot":
             fig = px.box(
                 data_with_buckets,
                 x='angle_bucket',
-                y=metrics[selected_metric],
-                color='year' if len(selected_years) > 1 else None,
-                title=f"{selected_metric} by Arm Angle ({bucket_size}° buckets)"
+                y=metric_col,
+                color='year',
+                title=f"{metric_name} by Arm Angle ({bucket_size}° buckets)"
             )
         else:  # Bar Chart
-            avg_data = data_with_buckets.groupby('angle_bucket')[metrics[selected_metric]].mean().reset_index()
+            avg_data = data_with_buckets.groupby('angle_bucket')[metric_col].agg([
+                'mean', 'count'
+            ]).reset_index()
+            
             fig = px.bar(
                 avg_data,
                 x='angle_bucket',
-                y=metrics[selected_metric],
-                title=f"Average {selected_metric} by Arm Angle ({bucket_size}° buckets)"
+                y='mean',
+                title=f"Average {metric_name} by Arm Angle ({bucket_size}° buckets)",
+                text=avg_data['count'].apply(lambda x: f"n={x}")  # Add sample size labels
             )
+            
+            # Optimize y-axis range
+            y_min = avg_data['mean'].min() * 0.95
+            y_max = avg_data['mean'].max() * 1.05
+            fig.update_layout(yaxis_range=[y_min, y_max])
+        
+        # Add league average line
+        league_avg = data[metric_col].mean()
+        fig.add_hline(
+            y=league_avg,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"League Avg: {league_avg:.1f}",
+            annotation_position="bottom right"
+        )
     
+    # Update layout
     fig.update_layout(
         xaxis_title="Arm Angle (degrees)",
-        yaxis_title=selected_metric
+        yaxis_title=metric_name,
+        showlegend=True
     )
     
+    return fig, empty_buckets if 'empty_buckets' in locals() else None
+
+def main():
+    st.title("Pitcher Arm Angle Analysis")
+    
+    # Load data
+    data = load_and_validate_data()  # Your existing load function
+    if data is None:
+        st.error("No data available. Please check the data/processed directory.")
+        return
+    
+    # Available metrics with typical ranges for y-axis optimization
+    metrics = {
+        'K%': {'col': 'k_percent', 'range': [0, 45]},
+        'BB%': {'col': 'bb_percent', 'range': [0, 20]},
+        'Whiff%': {'col': 'whiff_percent', 'range': [0, 40]},
+        'Barrel%': {'col': 'barrel_percent', 'range': [0, 15]},
+        'Hard Hit%': {'col': 'hard_hit_percent', 'range': [20, 50]},
+        'xwOBA': {'col': 'xwoba', 'range': [0.250, 0.400]}
+    }
+    
+    # Controls
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        selected_metric = st.selectbox("Select Metric", options=list(metrics.keys()))
+    with col2:
+        plot_type = st.selectbox("Plot Type", ["Bar Chart", "Scatter", "Box Plot"])
+    with col3:
+        if plot_type != "Scatter":
+            bucket_size = st.selectbox("Bucket Size", [5, 10, 15], index=1)
+    
+    # Create visualization
+    fig, empty_buckets = create_visualization(
+        data,
+        selected_metric,
+        metrics[selected_metric]['col'],
+        plot_type,
+        bucket_size if plot_type != "Scatter" else None
+    )
+    
+    # Display the plot
     st.plotly_chart(fig, use_container_width=True)
     
-    # Show data table with suspicious values
-    if st.checkbox("Show pitchers with negative arm angles"):
-        suspicious_data = data[data['ball_angle'] < 0].sort_values('ball_angle')
-        st.dataframe(
-            suspicious_data[['pitcher_name', 'year', 'ball_angle'] + list(metrics.values())],
-            use_container_width=True
-        )
+    # Display empty bucket information if any
+    if empty_buckets is not None and not empty_buckets.empty:
+        st.info(f"The following angle ranges had no data: {', '.join(empty_buckets)}")
+    
+    # Add sample size information
+    if plot_type != "Scatter":
+        st.caption("Note: 'n=' values show the number of pitchers in each bucket")
 
 if __name__ == "__main__":
     main()
