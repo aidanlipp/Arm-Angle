@@ -1,94 +1,127 @@
-def create_visualization(data, metric_name, metric_col, plot_type, bucket_size=None):
-    """Create visualization with interactive selection"""
-    if plot_type == "Scatter":
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
+from pathlib import Path
+from streamlit_plotly_events import plotly_events
+
+def load_and_validate_data():
+    """Load data from processed directory"""
+    data_path = Path("data/processed")
+    dfs = []
+    
+    for year in range(20, 25):
+        try:
+            file_path = data_path / f'ArmAngles{year}_complete.csv'
+            if file_path.exists():
+                df = pd.read_csv(file_path)
+                df['year'] = f'20{year}'
+                dfs.append(df)
+                st.sidebar.success(f"✓ Loaded 20{year} data")
+        except Exception as e:
+            st.sidebar.warning(f"Missing file: ArmAngles{year}_complete.csv")
+    
+    if not dfs:
+        return None
+        
+    combined_df = pd.concat(dfs, ignore_index=True)
+    st.sidebar.write(f"Years: {', '.join(sorted(combined_df['year'].unique()))}")
+    st.sidebar.write(f"Angle Range: {combined_df['ball_angle'].min():.1f}° to {combined_df['ball_angle'].max():.1f}°")
+    
+    return combined_df
+
+def create_angle_buckets(df, bucket_size):
+    min_angle = np.floor(df['ball_angle'].min() / bucket_size) * bucket_size
+    max_angle = np.ceil(df['ball_angle'].max() / bucket_size) * bucket_size
+    
+    df['angle_bucket'] = pd.cut(
+        df['ball_angle'],
+        bins=np.arange(min_angle, max_angle + bucket_size, bucket_size),
+        labels=[f"{i} to {i + bucket_size}" for i in np.arange(min_angle, max_angle, bucket_size)]
+    )
+    return df
+
+def main():
+    st.title("Pitcher Arm Angle Analysis")
+    
+    data = load_and_validate_data()
+    if data is None:
+        st.error("No data available")
+        return
+    
+    # Available metrics
+    metrics = {
+        'K%': 'k_percent',
+        'BB%': 'bb_percent',
+        'Whiff%': 'whiff_percent',
+        'Barrel%': 'barrel_percent',
+        'Hard Hit%': 'hard_hit_percent',
+        'xwOBA': 'xwoba'
+    }
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        selected_metric = st.selectbox("Select Metric", list(metrics.keys()))
+    with col2:
+        plot_type = st.selectbox("Plot Type", ["Bar Chart", "Scatter"])
+    with col3:
+        bucket_size = st.selectbox("Bucket Size", [5, 10, 15]) if plot_type == "Bar Chart" else None
+    
+    metric_col = metrics[selected_metric]
+    
+    if plot_type == "Bar Chart":
+        data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
+        
+        # Calculate averages and counts per bucket
+        bucket_stats = data_with_buckets.groupby('angle_bucket').agg({
+            metric_col: ['mean', 'count']
+        }).reset_index()
+        
+        fig = px.bar(
+            bucket_stats,
+            x='angle_bucket',
+            y=('metric_col', 'mean'),
+            text=bucket_stats[('metric_col', 'count')].apply(lambda x: f"n={x}"),
+            title=f"Average {selected_metric} by Arm Angle ({bucket_size}° buckets)"
+        )
+        
+        # Add league average line
+        league_avg = data[metric_col].mean()
+        fig.add_hline(y=league_avg, line_dash="dash", line_color="red",
+                     annotation_text=f"League Avg: {league_avg:.1f}")
+        
+    else:  # Scatter plot
         fig = px.scatter(
             data,
             x='ball_angle',
             y=metric_col,
-            color='year',
-            title=f"{metric_name} vs Arm Angle",
-            custom_data=['pitcher_name', 'year', 'k_percent', 'bb_percent', 
-                        'whiff_percent', 'barrel_percent', 'hard_hit_percent', 'xwoba']
+            title=f"{selected_metric} vs Arm Angle",
+            hover_data=['pitcher_name', 'year']
         )
-        
-        # Add click event template
-        fig.update_traces(
-            hovertemplate=(
-                "<b>%{customdata[0]}</b><br>"
-                "Year: %{customdata[1]}<br>"
-                "Arm Angle: %{x:.1f}°<br>"
-                f"{metric_name}: %{y:.1f}<br>"
-                "<i>Click for full stats</i><extra></extra>"
-            )
-        )
-        
-    else:  # Bar Chart
-        data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
-        avg_data = data_with_buckets.groupby('angle_bucket').agg({
-            metric_col: ['mean', 'count'],
-            'pitcher_name': list
-        }).reset_index()
-        
-        fig = px.bar(
-            avg_data,
-            x='angle_bucket',
-            y=('metric_col', 'mean'),
-            title=f"Average {metric_name} by Arm Angle ({bucket_size}° buckets)",
-            text=avg_data[('metric_col', 'count')].apply(lambda x: f"n={x}"),
-            custom_data=[('pitcher_name', 'list')]
-        )
-
-    # Add league average line
-    league_avg = data[metric_col].mean()
-    fig.add_hline(
-        y=league_avg,
-        line_dash="dash",
-        line_color="red",
-        annotation_text=f"League Avg: {league_avg:.1f}"
-    )
     
-    return fig
-
-def main():
-    # ... [previous code remains the same until visualization] ...
-
-    # Create visualization
-    fig = create_visualization(data, selected_metric, metrics[selected_metric]['col'], 
-                             plot_type, bucket_size if plot_type != "Scatter" else None)
+    # Show plot and capture clicks
+    selected_point = plotly_events(fig)
     
-    # Add click event handling
-    selected_point = plotly_events(fig, click_event=True)
-    
+    # Show selected data
     if selected_point:
-        st.subheader("Selected Pitcher(s) Stats")
-        if plot_type == "Scatter":
-            # For scatter plot, show individual pitcher
-            pitcher_name = selected_point[0]['customdata'][0]
-            pitcher_data = data[data['pitcher_name'] == pitcher_name].iloc[0]
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("K%", f"{pitcher_data['k_percent']:.1f}%")
-                st.metric("BB%", f"{pitcher_data['bb_percent']:.1f}%")
-            with col2:
-                st.metric("Whiff%", f"{pitcher_data['whiff_percent']:.1f}%")
-                st.metric("Barrel%", f"{pitcher_data['barrel_percent']:.1f}%")
-            with col3:
-                st.metric("Hard Hit%", f"{pitcher_data['hard_hit_percent']:.1f}%")
-                st.metric("xwOBA", f"{pitcher_data['xwoba']:.3f}")
-                
-        else:  # Bar Chart
-            # For bar chart, show all pitchers in bucket
-            angle_bucket = selected_point[0]['x']
-            bucket_pitchers = data[data['angle_bucket'] == angle_bucket]
-            
+        st.subheader("Selected Pitcher(s)")
+        if plot_type == "Bar Chart":
+            bucket = selected_point[0]['x']
+            bucket_data = data_with_buckets[data_with_buckets['angle_bucket'] == bucket]
             st.dataframe(
-                bucket_pitchers[['pitcher_name', 'year', 'ball_angle', 'k_percent', 
-                               'bb_percent', 'whiff_percent', 'barrel_percent', 
-                               'hard_hit_percent', 'xwoba']]
+                bucket_data[['pitcher_name', 'year', 'ball_angle'] + list(metrics.values())]
                 .sort_values('ball_angle')
-                .set_index('pitcher_name')
-                .round(2)
+            )
+        else:
+            clicked_angle = selected_point[0]['x']
+            clicked_metric = selected_point[0]['y']
+            closest_pitcher = data[
+                (abs(data['ball_angle'] - clicked_angle) < 0.1) &
+                (abs(data[metric_col] - clicked_metric) < 0.1)
+            ]
+            st.dataframe(
+                closest_pitcher[['pitcher_name', 'year', 'ball_angle'] + list(metrics.values())]
             )
 
 if __name__ == "__main__":
