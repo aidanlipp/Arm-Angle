@@ -1,3 +1,41 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
+from pathlib import Path
+from streamlit_plotly_events import plotly_events
+
+def load_and_validate_data():
+    data_path = Path("data/processed")
+    dfs = []
+    
+    for year in range(20, 24):  # Update range if you have 2024 data
+        file_path = data_path / f'ArmAngles{year}_complete.csv'
+        if file_path.exists():
+            df = pd.read_csv(file_path)
+            df['year'] = f'20{year}'
+            dfs.append(df)
+            st.sidebar.success(f"✓ Loaded 20{year} data")
+        else:
+            st.sidebar.warning(f"Missing: ArmAngles{year}_complete.csv")
+    
+    if not dfs:
+        return None
+    
+    combined_df = pd.concat(dfs, ignore_index=True)
+    return combined_df
+
+def create_angle_buckets(df, bucket_size):
+    min_angle = np.floor(df['ball_angle'].min() / bucket_size) * bucket_size
+    max_angle = np.ceil(df['ball_angle'].max() / bucket_size) * bucket_size
+    
+    bins = np.arange(min_angle, max_angle + bucket_size, bucket_size)
+    labels = [f"{bins[i]:.0f} to {bins[i+1]:.0f}" for i in range(len(bins)-1)]
+    
+    df['angle_bucket'] = pd.cut(df['ball_angle'], bins=bins, labels=labels)
+    return df
+
 def main():
     st.title("Pitcher Arm Angle Analysis")
     
@@ -104,3 +142,6 @@ def main():
                 .sort_values('ball_angle')
                 .round(2)
             )
+
+if __name__ == "__main__":
+    main()
