@@ -8,22 +8,26 @@ from streamlit_plotly_events import plotly_events
 import requests
 from bs4 import BeautifulSoup
 from pybaseball import league_stats_bref
+from datetime import datetime
 
 def get_league_averages():
-    """Get league-wide pitching stats using pybaseball"""
+    """Get league-wide pitching stats from Baseball Savant"""
     try:
         league_stats = {}
         
         for year in range(2020, 2025):
-            # Get league stats for the year
-            stats = league_stats_bref(year)
-            if stats is not None:
-                # Calculate league averages
+            # Baseball Savant league stats URL
+            url = f"https://baseballsavant.mlb.com/statcast_search/csv?all=true&hfPT=&hfAB=&hfBBT=&hfPR=&hfZ=&stadium=&hfBBL=&hfNewZones=&hfGT=R%7C&hfC=&hfSea={year}%7C&hfSit=&player_type=pitcher&hfOuts=&opponent=&pitcher_throws=&batter_stands=&hfSA=&team=&position=&hfRO=&home_road=&game_date_gt=&game_date_lt=&hfFlag=&hfInfield=&hfOutfield=&metric_1=&hfInn=&min_pitches=0&min_results=0&group_by=league&sort_col=pitch_count&player_event_sort=api_p_release_speed&sort_order=desc&min_pas=0&type=details"
+            
+            df = pd.read_csv(url)
+            
+            # Calculate league averages
+            if not df.empty:
                 league_stats[str(year)] = {
-                    'K%': stats['SO/PA'].mean() * 100,  # Convert to percentage
-                    'BB%': stats['BB/PA'].mean() * 100,
-                    # Note: Barrel% and Hard Hit% aren't available in Baseball Reference
-                    # We might need to source these from Baseball Savant directly
+                    'K%': (df['strikeout'].sum() / df['pa'].sum() * 100),
+                    'BB%': (df['walk'].sum() / df['pa'].sum() * 100),
+                    'Barrel%': (df['barrel'].sum() / df['balls_in_play'].sum() * 100),
+                    'Hard Hit%': (df['hard_hit'].sum() / df['balls_in_play'].sum() * 100)
                 }
         
         return league_stats
@@ -39,38 +43,47 @@ def validate_stats(our_data):
         league_avgs = get_league_averages()
     
     if league_avgs:
-        # Create comparison dataframe
         comparison = []
+        metrics = {
+            'K%': 'k_percent',
+            'BB%': 'bb_percent',
+            'Barrel%': 'barrel_percent',
+            'Hard Hit%': 'hard_hit_percent'
+        }
         
         for year in our_data['year'].unique():
             year_data = our_data[our_data['year'] == year]
             if year in league_avgs:
-                our_k_pct = year_data['k_percent'].mean()
-                our_bb_pct = year_data['bb_percent'].mean()
+                row = {'Year': year}
                 
-                comparison.append({
-                    'Year': year,
-                    'Our K%': round(our_k_pct, 1),
-                    'League K%': round(league_avgs[year]['K%'], 1),
-                    'K% Diff': round(abs(our_k_pct - league_avgs[year]['K%']), 1),
-                    'Our BB%': round(our_bb_pct, 1),
-                    'League BB%': round(league_avgs[year]['BB%'], 1),
-                    'BB% Diff': round(abs(our_bb_pct - league_avgs[year]['BB%']), 1)
-                })
+                for metric_name, our_col in metrics.items():
+                    our_val = year_data[our_col].mean()
+                    league_val = league_avgs[year][metric_name]
+                    
+                    row.update({
+                        f'Our {metric_name}': round(our_val, 1),
+                        f'League {metric_name}': round(league_val, 1),
+                        f'{metric_name} Diff': round(abs(our_val - league_val), 1)
+                    })
+                
+                comparison.append(row)
         
         if comparison:
             df_comparison = pd.DataFrame(comparison)
             st.dataframe(df_comparison.style.highlight_grid(axis=0))
             
-            # Add note about other metrics
-            st.info("Note: Barrel% and Hard Hit% validation requires direct Baseball Savant access. " 
-                   "These stats are typically calculated directly from Statcast data.")
+            # Highlight significant differences
+            for metric in metrics.keys():
+                diff_col = f'{metric} Diff'
+                significant_diff = df_comparison[df_comparison[diff_col] > 1.0]
+                if not significant_diff.empty:
+                    st.warning(f"Notable differences in {metric}")
+                    for _, row in significant_diff.iterrows():
+                        st.write(f"{row['Year']}: Our {metric}: {row[f'Our {metric}']}%, "
+                               f"League: {row[f'League {metric}']}%")
     else:
         st.error("Unable to fetch league averages for validation")
 
-# Add to main():
-if st.checkbox("Show Stats Validation"):
-    validate_stats(data)
 
 def load_and_validate_data():
     """Load and validate data from processed directory"""
