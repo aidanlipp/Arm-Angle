@@ -5,6 +5,94 @@ import plotly.graph_objects as go
 import numpy as np
 from pathlib import Path
 from streamlit_plotly_events import plotly_events
+import requests
+from bs4 import BeautifulSoup
+
+def get_fangraphs_league_averages():
+    """Scrape FanGraphs for league-wide pitching stats"""
+    # FanGraphs league stats URL
+    url = "https://www.fangraphs.com/leaders.aspx?pos=all&stats=pit&lg=all&qual=0&type=8&season=2024&month=0&season1=2020&ind=0&team=0,ss&rost=0&age=0&filter=&players=0&startdate=&enddate="
+    
+    try:
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Find the stats table
+        table = soup.find('table', {'class': 'rgMasterTable'})
+        df = pd.read_html(str(table))[0]
+        
+        # Get league averages by year
+        league_stats = {}
+        for year in range(2020, 2025):
+            year_data = df[df['Season'] == year]
+            if not year_data.empty:
+                league_stats[str(year)] = {
+                    'K%': year_data['K%'].values[0],
+                    'BB%': year_data['BB%'].values[0],
+                    'Barrel%': year_data['Barrel%'].values[0],
+                    'Hard Hit%': year_data['Hard%'].values[0]
+                }
+        
+        return league_stats
+        
+    except Exception as e:
+        print(f"Error scraping FanGraphs: {e}")
+        return None
+
+def validate_stats(our_data, fangraphs_data):
+    """Compare our calculated averages with FanGraphs data"""
+    comparison = pd.DataFrame(columns=['Year', 'Metric', 'Our Average', 'FanGraphs Average', 'Difference'])
+    
+    metrics = {
+        'K%': 'k_percent',
+        'BB%': 'bb_percent',
+        'Barrel%': 'barrel_percent',
+        'Hard Hit%': 'hard_hit_percent'
+    }
+    
+    for year in our_data['year'].unique():
+        year_data = our_data[our_data['year'] == year]
+        if year in fangraphs_data:
+            for metric_name, our_col in metrics.items():
+                our_avg = year_data[our_col].mean()
+                fg_avg = fangraphs_data[year][metric_name]
+                comparison = pd.concat([comparison, pd.DataFrame({
+                    'Year': [year],
+                    'Metric': [metric_name],
+                    'Our Average': [round(our_avg, 1)],
+                    'FanGraphs Average': [round(fg_avg, 1)],
+                    'Difference': [round(abs(our_avg - fg_avg), 2)]
+                })])
+    
+    return comparison
+
+# Usage in the main app:
+def display_stat_validation():
+    st.subheader("Stats Validation against FanGraphs")
+    
+    with st.spinner("Fetching FanGraphs data..."):
+        fg_stats = get_fangraphs_league_averages()
+        
+    if fg_stats:
+        comparison = validate_stats(data, fg_stats)
+        
+        # Display comparison
+        st.dataframe(comparison.style.highlight_grid(axis=0))
+        
+        # Flag significant differences
+        significant_diff = comparison[comparison['Difference'] > 1.0]
+        if not significant_diff.empty:
+            st.warning("Notable differences found in the following metrics:")
+            for _, row in significant_diff.iterrows():
+                st.write(f"{row['Year']} {row['Metric']}: Our avg: {row['Our Average']}%, FG avg: {row['FanGraphs Average']}%")
+    else:
+        st.error("Unable to fetch FanGraphs data for validation")
+
+# Add to main():
+if st.checkbox("Show Stats Validation"):
+    display_stat_validation()
+
+
 
 def load_and_validate_data():
     """Load and validate data from processed directory"""
