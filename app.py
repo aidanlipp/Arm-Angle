@@ -7,10 +7,11 @@ from pathlib import Path
 from streamlit_plotly_events import plotly_events
 
 def load_and_validate_data():
+    """Load and validate data from processed directory"""
     data_path = Path("data/processed")
     dfs = []
     
-    for year in range(20, 24):  # Update range if you have 2024 data
+    for year in range(20, 24):
         file_path = data_path / f'ArmAngles{year}_complete.csv'
         if file_path.exists():
             df = pd.read_csv(file_path)
@@ -22,7 +23,7 @@ def load_and_validate_data():
     
     if not dfs:
         return None
-    
+
     combined_df = pd.concat(dfs, ignore_index=True)
     return combined_df
 
@@ -31,19 +32,15 @@ def create_angle_buckets(df, bucket_size):
     if df.empty:
         return df
         
-    # Get min and max angles from the data
     min_angle = df['ball_angle'].min()
     max_angle = df['ball_angle'].max()
     
-    # Create bucket edges
     min_edge = np.floor(min_angle / bucket_size) * bucket_size
     max_edge = np.ceil(max_angle / bucket_size) * bucket_size
     edges = np.arange(min_edge, max_edge + bucket_size, bucket_size)
     
-    # Create labels for the buckets
     labels = [f"{edges[i]:.0f} to {edges[i+1]:.0f}" for i in range(len(edges)-1)]
     
-    # Add bucket column
     df['angle_bucket'] = pd.cut(
         df['ball_angle'],
         bins=edges,
@@ -52,6 +49,44 @@ def create_angle_buckets(df, bucket_size):
     )
     
     return df
+
+def create_bar_chart(bucket_stats, selected_metric, bucket_size, data, metrics):
+    """Create bar chart with optimized visualization"""
+    y_min = bucket_stats['mean'].min() * 0.98
+    y_max = bucket_stats['mean'].max() * 1.02
+    
+    fig = px.bar(
+        bucket_stats,
+        x='angle_bucket',
+        y='mean',
+        title=f"Average {selected_metric} by Arm Angle ({bucket_size}° buckets)"
+    )
+    
+    fig.update_traces(
+        marker_color='rgb(0, 116, 217)',
+        showlegend=False
+    )
+    
+    league_avg = data[metrics[selected_metric]].mean()
+    fig.add_hline(
+        y=league_avg,
+        line_dash="dash",
+        line_color="red",
+        annotation_text=f"League Avg: {league_avg:.3f}",
+        annotation_position="bottom right"
+    )
+    
+    fig.update_layout(
+        xaxis_title="Arm Angle (degrees)",
+        yaxis_title=selected_metric,
+        yaxis=dict(
+            range=[y_min, y_max],
+            tickformat='.3f'
+        ),
+        plot_bgcolor='white'
+    )
+    
+    return fig
 
 def main():
     st.title("Pitcher Arm Angle Analysis")
@@ -87,7 +122,6 @@ def main():
         key='year_selector'
     )
     
-    # Filter data by selected years
     if selected_years:
         data = data[data['year'].isin(selected_years)]
     else:
@@ -109,49 +143,19 @@ def main():
             
     else:  # Bar Chart
         try:
-            # Create buckets
             data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
             
-            # Calculate statistics for each bucket
             bucket_stats = data_with_buckets.groupby('angle_bucket', observed=True).agg({
                 metrics[selected_metric]: ['mean', 'count']
             }).reset_index()
             
-            # Rename columns for easier access
             bucket_stats.columns = ['angle_bucket', 'mean', 'count']
             
-            # Create bar chart
-            fig = px.bar(
-                bucket_stats,
-                x='angle_bucket',
-                y='mean',
-                title=f"Average {selected_metric} by Arm Angle ({bucket_size}° buckets)"
-            )
-            
-            # Add sample size labels
-            fig.update_traces(
-                text=bucket_stats['count'].apply(lambda x: f"n={x}"),
-                textposition='auto'
-            )
-            
-            # Add league average line
-            league_avg = data[metrics[selected_metric]].mean()
-            fig.add_hline(
-                y=league_avg,
-                line_dash="dash",
-                line_color="red",
-                annotation_text=f"League Avg: {league_avg:.1f}"
-            )
+            fig = create_bar_chart(bucket_stats, selected_metric, bucket_size, data, metrics)
             
         except Exception as e:
             st.error(f"Error creating bar chart: {str(e)}")
             return
-    
-    # Update layout
-    fig.update_layout(
-        xaxis_title="Arm Angle (degrees)",
-        yaxis_title=selected_metric
-    )
     
     # Display plot and handle clicks
     selected_point = plotly_events(fig, click_event=True)
@@ -174,7 +178,7 @@ def main():
             st.dataframe(
                 selected_data[display_cols]
                 .sort_values('ball_angle')
-                .round(2)
+                .round(3)
             )
 
 if __name__ == "__main__":
