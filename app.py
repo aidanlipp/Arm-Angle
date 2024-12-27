@@ -7,7 +7,6 @@ from pathlib import Path
 from streamlit_plotly_events import plotly_events
 import requests
 from bs4 import BeautifulSoup
-from pybaseball import league_stats_bref
 from datetime import datetime
 
 def get_league_averages():
