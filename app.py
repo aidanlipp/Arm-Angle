@@ -161,8 +161,35 @@ def main():
         st.warning("Please select at least one year")
         return
     
-if plot_type == "Scatter":
-        fig = create_scatter_plot(data, selected_metric, metrics)   
+    if plot_type == "Scatter":
+        fig = px.scatter(
+            data,
+            x='ball_angle',
+            y=metrics[selected_metric],
+            color='year',  # Always color by year
+            title=f"{selected_metric} vs Arm Angle",
+            hover_data=['pitcher_name', 'year'],
+            color_discrete_sequence=px.colors.qualitative.Set1
+        )
+        
+        # Add metric average line
+        metric_avg = data[metrics[selected_metric]].mean()
+        fig.add_hline(
+            y=metric_avg,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"League Avg {selected_metric}: {metric_avg:.3f}",
+            annotation_position="bottom right"
+        )
+        
+        # Update layout
+        fig.update_layout(
+            xaxis_title="Arm Angle (degrees)",
+            yaxis_title=selected_metric,
+            showlegend=True,
+            legend_title="Year"
+        )
+            
     else:  # Bar Chart
         try:
             data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
