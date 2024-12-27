@@ -27,13 +27,30 @@ def load_and_validate_data():
     return combined_df
 
 def create_angle_buckets(df, bucket_size):
-    min_angle = np.floor(df['ball_angle'].min() / bucket_size) * bucket_size
-    max_angle = np.ceil(df['ball_angle'].max() / bucket_size) * bucket_size
+    """Create angle buckets with proper error handling"""
+    if df.empty:
+        return df
+        
+    # Get min and max angles from the data
+    min_angle = df['ball_angle'].min()
+    max_angle = df['ball_angle'].max()
     
-    bins = np.arange(min_angle, max_angle + bucket_size, bucket_size)
-    labels = [f"{bins[i]:.0f} to {bins[i+1]:.0f}" for i in range(len(bins)-1)]
+    # Create bucket edges
+    min_edge = np.floor(min_angle / bucket_size) * bucket_size
+    max_edge = np.ceil(max_angle / bucket_size) * bucket_size
+    edges = np.arange(min_edge, max_edge + bucket_size, bucket_size)
     
-    df['angle_bucket'] = pd.cut(df['ball_angle'], bins=bins, labels=labels)
+    # Create labels for the buckets
+    labels = [f"{edges[i]:.0f} to {edges[i+1]:.0f}" for i in range(len(edges)-1)]
+    
+    # Add bucket column
+    df['angle_bucket'] = pd.cut(
+        df['ball_angle'],
+        bins=edges,
+        labels=labels,
+        include_lowest=True
+    )
+    
     return df
 
 def main():
@@ -61,16 +78,21 @@ def main():
     with col3:
         bucket_size = st.selectbox("Bucket Size", [5, 10, 15]) if plot_type == "Bar Chart" else None
     
-    # Add year selection
+    # Year selection
     available_years = sorted(data['year'].unique())
     selected_years = st.multiselect(
         "Select Years",
         options=available_years,
-        default=available_years
+        default=available_years,
+        key='year_selector'
     )
     
     # Filter data by selected years
-    data = data[data['year'].isin(selected_years)]
+    if selected_years:
+        data = data[data['year'].isin(selected_years)]
+    else:
+        st.warning("Please select at least one year")
+        return
     
     if plot_type == "Scatter":
         fig = px.scatter(
@@ -82,63 +104,75 @@ def main():
             hover_data=['pitcher_name', 'year']
         )
         
-        # Set color to blue if not coloring by year
         if len(selected_years) <= 1:
             fig.update_traces(marker=dict(color='blue'))
-        
+            
     else:  # Bar Chart
-        data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
-        bucket_stats = data_with_buckets.groupby('angle_bucket').agg({
-            metrics[selected_metric]: ['mean', 'count']
-        }).reset_index()
-        
-        fig = px.bar(
-            bucket_stats,
-            x='angle_bucket',
-            y=(metrics[selected_metric], 'mean'),
-            title=f"Average {selected_metric} by Arm Angle ({bucket_size}° buckets)"
-        )
-        
-        # Add counts as text on bars
-        fig.update_traces(
-            text=bucket_stats[(metrics[selected_metric], 'count')].apply(lambda x: f"n={x}"),
-            textposition='auto'
-        )
-        
-        # Add league average line
-        league_avg = data[metrics[selected_metric]].mean()
-        fig.add_hline(
-            y=league_avg,
-            line_dash="dash",
-            line_color="red",
-            annotation_text=f"League Avg: {league_avg:.1f}"
-        )
+        try:
+            # Create buckets
+            data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
+            
+            # Calculate statistics for each bucket
+            bucket_stats = data_with_buckets.groupby('angle_bucket', observed=True).agg({
+                metrics[selected_metric]: ['mean', 'count']
+            }).reset_index()
+            
+            # Rename columns for easier access
+            bucket_stats.columns = ['angle_bucket', 'mean', 'count']
+            
+            # Create bar chart
+            fig = px.bar(
+                bucket_stats,
+                x='angle_bucket',
+                y='mean',
+                title=f"Average {selected_metric} by Arm Angle ({bucket_size}° buckets)"
+            )
+            
+            # Add sample size labels
+            fig.update_traces(
+                text=bucket_stats['count'].apply(lambda x: f"n={x}"),
+                textposition='auto'
+            )
+            
+            # Add league average line
+            league_avg = data[metrics[selected_metric]].mean()
+            fig.add_hline(
+                y=league_avg,
+                line_dash="dash",
+                line_color="red",
+                annotation_text=f"League Avg: {league_avg:.1f}"
+            )
+            
+        except Exception as e:
+            st.error(f"Error creating bar chart: {str(e)}")
+            return
     
-    # Common layout updates
+    # Update layout
     fig.update_layout(
         xaxis_title="Arm Angle (degrees)",
         yaxis_title=selected_metric
     )
     
+    # Display plot and handle clicks
     selected_point = plotly_events(fig, click_event=True)
     
     if selected_point:
         st.subheader("Selected Pitcher(s)")
-        display_columns = ['pitcher_name', 'year', 'ball_angle'] + list(metrics.values())
         if plot_type == "Bar Chart":
             bucket = selected_point[0]['x']
-            df_display = data_with_buckets[data_with_buckets['angle_bucket'] == bucket]
+            selected_data = data_with_buckets[data_with_buckets['angle_bucket'] == bucket]
         else:
             clicked_x = selected_point[0]['x']
             clicked_y = selected_point[0]['y']
-            df_display = data[
+            selected_data = data[
                 (abs(data['ball_angle'] - clicked_x) < 0.5) &
                 (abs(data[metrics[selected_metric]] - clicked_y) < 0.5)
             ]
         
-        if not df_display.empty:
+        if not selected_data.empty:
+            display_cols = ['pitcher_name', 'year', 'ball_angle'] + list(metrics.values())
             st.dataframe(
-                df_display[display_columns]
+                selected_data[display_cols]
                 .sort_values('ball_angle')
                 .round(2)
             )
