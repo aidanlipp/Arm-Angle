@@ -71,7 +71,6 @@ def validate_stats(our_data):
 # Add to main():
 if st.checkbox("Show Stats Validation"):
     validate_stats(data)
-```
 
 def load_and_validate_data():
     """Load and validate data from processed directory"""
