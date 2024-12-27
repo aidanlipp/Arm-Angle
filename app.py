@@ -7,92 +7,71 @@ from pathlib import Path
 from streamlit_plotly_events import plotly_events
 import requests
 from bs4 import BeautifulSoup
+from pybaseball import league_stats_bref
 
-def get_fangraphs_league_averages():
-    """Scrape FanGraphs for league-wide pitching stats"""
-    # FanGraphs league stats URL
-    url = "https://www.fangraphs.com/leaders.aspx?pos=all&stats=pit&lg=all&qual=0&type=8&season=2024&month=0&season1=2020&ind=0&team=0,ss&rost=0&age=0&filter=&players=0&startdate=&enddate="
-    
+def get_league_averages():
+    """Get league-wide pitching stats using pybaseball"""
     try:
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Find the stats table
-        table = soup.find('table', {'class': 'rgMasterTable'})
-        df = pd.read_html(str(table))[0]
-        
-        # Get league averages by year
         league_stats = {}
+        
         for year in range(2020, 2025):
-            year_data = df[df['Season'] == year]
-            if not year_data.empty:
+            # Get league stats for the year
+            stats = league_stats_bref(year)
+            if stats is not None:
+                # Calculate league averages
                 league_stats[str(year)] = {
-                    'K%': year_data['K%'].values[0],
-                    'BB%': year_data['BB%'].values[0],
-                    'Barrel%': year_data['Barrel%'].values[0],
-                    'Hard Hit%': year_data['Hard%'].values[0]
+                    'K%': stats['SO/PA'].mean() * 100,  # Convert to percentage
+                    'BB%': stats['BB/PA'].mean() * 100,
+                    # Note: Barrel% and Hard Hit% aren't available in Baseball Reference
+                    # We might need to source these from Baseball Savant directly
                 }
         
         return league_stats
-        
     except Exception as e:
-        print(f"Error scraping FanGraphs: {e}")
+        st.error(f"Error fetching league stats: {e}")
         return None
 
-def validate_stats(our_data, fangraphs_data):
-    """Compare our calculated averages with FanGraphs data"""
-    comparison = pd.DataFrame(columns=['Year', 'Metric', 'Our Average', 'FanGraphs Average', 'Difference'])
+def validate_stats(our_data):
+    """Compare our calculated averages with league data"""
+    st.subheader("Stats Validation")
     
-    metrics = {
-        'K%': 'k_percent',
-        'BB%': 'bb_percent',
-        'Barrel%': 'barrel_percent',
-        'Hard Hit%': 'hard_hit_percent'
-    }
+    with st.spinner("Fetching league averages..."):
+        league_avgs = get_league_averages()
     
-    for year in our_data['year'].unique():
-        year_data = our_data[our_data['year'] == year]
-        if year in fangraphs_data:
-            for metric_name, our_col in metrics.items():
-                our_avg = year_data[our_col].mean()
-                fg_avg = fangraphs_data[year][metric_name]
-                comparison = pd.concat([comparison, pd.DataFrame({
-                    'Year': [year],
-                    'Metric': [metric_name],
-                    'Our Average': [round(our_avg, 1)],
-                    'FanGraphs Average': [round(fg_avg, 1)],
-                    'Difference': [round(abs(our_avg - fg_avg), 2)]
-                })])
-    
-    return comparison
-
-# Usage in the main app:
-def display_stat_validation():
-    st.subheader("Stats Validation against FanGraphs")
-    
-    with st.spinner("Fetching FanGraphs data..."):
-        fg_stats = get_fangraphs_league_averages()
+    if league_avgs:
+        # Create comparison dataframe
+        comparison = []
         
-    if fg_stats:
-        comparison = validate_stats(data, fg_stats)
+        for year in our_data['year'].unique():
+            year_data = our_data[our_data['year'] == year]
+            if year in league_avgs:
+                our_k_pct = year_data['k_percent'].mean()
+                our_bb_pct = year_data['bb_percent'].mean()
+                
+                comparison.append({
+                    'Year': year,
+                    'Our K%': round(our_k_pct, 1),
+                    'League K%': round(league_avgs[year]['K%'], 1),
+                    'K% Diff': round(abs(our_k_pct - league_avgs[year]['K%']), 1),
+                    'Our BB%': round(our_bb_pct, 1),
+                    'League BB%': round(league_avgs[year]['BB%'], 1),
+                    'BB% Diff': round(abs(our_bb_pct - league_avgs[year]['BB%']), 1)
+                })
         
-        # Display comparison
-        st.dataframe(comparison.style.highlight_grid(axis=0))
-        
-        # Flag significant differences
-        significant_diff = comparison[comparison['Difference'] > 1.0]
-        if not significant_diff.empty:
-            st.warning("Notable differences found in the following metrics:")
-            for _, row in significant_diff.iterrows():
-                st.write(f"{row['Year']} {row['Metric']}: Our avg: {row['Our Average']}%, FG avg: {row['FanGraphs Average']}%")
+        if comparison:
+            df_comparison = pd.DataFrame(comparison)
+            st.dataframe(df_comparison.style.highlight_grid(axis=0))
+            
+            # Add note about other metrics
+            st.info("Note: Barrel% and Hard Hit% validation requires direct Baseball Savant access. " 
+                   "These stats are typically calculated directly from Statcast data.")
     else:
-        st.error("Unable to fetch FanGraphs data for validation")
+        st.error("Unable to fetch league averages for validation")
 
 # Add to main():
 if st.checkbox("Show Stats Validation"):
-    display_stat_validation()
-
-
+    validate_stats(data)
+```
 
 def load_and_validate_data():
     """Load and validate data from processed directory"""
