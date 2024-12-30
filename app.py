@@ -16,6 +16,16 @@ def load_and_validate_data():
         'LH_Relievers': 'LeagueAvgLHRelievers.csv'
     }
     
+   def load_and_validate_data():
+    """Load and validate data from processed directory"""
+    data_path = Path("data/processed")
+    league_avg_files = {
+        'RH_Starters': 'LeagueAvgRHStarters.csv',
+        'LH_Starters': 'LeagueAvgLHStarters.csv',
+        'RH_Relievers': 'LeagueAvgRHRelievers.csv',
+        'LH_Relievers': 'LeagueAvgLHRelievers.csv'
+    }
+    
     # Load player-level data
     dfs = []
     for year in ['2020', '2021', '2022', '2023', '2024']:
@@ -47,12 +57,14 @@ def load_and_validate_data():
                     df.rename(columns={'swing_miss_percent': 'whiff_percent'}, inplace=True)
                 league_data[key] = df
                 st.sidebar.success(f"✓ Loaded {key} league averages")
+                st.write(f"Columns for {key}: {df.columns.tolist()}")
             else:
                 st.sidebar.warning(f"Missing: {file_name}")
         except Exception as e:
             st.sidebar.error(f"Error loading {key} league averages: {e}")
 
     return player_data, league_data
+
 
 
 
