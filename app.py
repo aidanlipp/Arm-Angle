@@ -72,6 +72,10 @@ def create_visualization(data, selected_metric, bucket_size=None, plot_type="Bar
         },
         'xwoba': {
             '2020': .323, '2021': .317, '2022': .309, '2023': .320, '2024': .312
+        },
+        'whiff_percent': {  # Added whiff_percent
+        '2020': 26.7, '2021': 26.0, '2022': 25.6, '2023': 25.8, '2024': 25.3
+
         }
     }
     
