@@ -5,58 +5,6 @@ import plotly.graph_objects as go
 import numpy as np
 from pathlib import Path
 from streamlit_plotly_events import plotly_events
-import requests
-from bs4 import BeautifulSoup
-from datetime import datetime
-
-def validate_league_stats(data):
-    """Compare stats with FanGraphs league averages"""
-    league_stats = {
-        '2020': {'K%': 23.4, 'BB%': 9.2, 'Barrel%': 7.6, 'HardHit%': 37.4},
-        '2021': {'K%': 23.2, 'BB%': 8.7, 'Barrel%': 7.9, 'HardHit%': 38.5},
-        '2022': {'K%': 22.4, 'BB%': 8.2, 'Barrel%': 7.5, 'HardHit%': 38.2},
-        '2023': {'K%': 22.7, 'BB%': 8.6, 'Barrel%': 8.1, 'HardHit%': 39.2},
-        '2024': {'K%': 22.6, 'BB%': 8.2, 'Barrel%': 7.8, 'HardHit%': 38.7}
-    }
-    
-    st.subheader("Stats Validation Against FanGraphs")
-    
-    metrics = {
-        'K%': 'k_percent',
-        'BB%': 'bb_percent',
-        'Barrel%': 'barrel_percent',
-        'HardHit%': 'hard_hit_percent'
-    }
-    
-    comparison = []
-    for year in sorted(data['year'].unique()):
-        row = {'Year': year}
-        for metric, our_col in metrics.items():
-            our_val = data[data['year'] == year][our_col].mean()
-            fg_val = league_stats[year][metric]
-            row.update({
-                f'Our {metric}': round(our_val, 1),
-                f'FG {metric}': fg_val,
-                f'{metric} Diff': round(abs(our_val - fg_val), 1)
-            })
-        comparison.append(row)
-    
-    df_comparison = pd.DataFrame(comparison)
-    
-    # Display comparison
-    st.dataframe(df_comparison.style.highlight_grid())
-    
-    # Flag significant differences
-    for metric in metrics.keys():
-        large_diffs = df_comparison[df_comparison[f'{metric} Diff'] > 1.0]
-        if not large_diffs.empty:
-            st.warning(f"Notable differences in {metric}:")
-            for _, row in large_diffs.iterrows():
-                st.write(f"{row['Year']}: Our {row[f'Our {metric}']}% vs FanGraphs {row[f'FG {metric}']}%")
-
-# Add to main():
-if st.checkbox("Validate Stats"):
-    validate_league_stats(data)
 
 def load_and_validate_data():
     """Load and validate data from processed directory"""
@@ -107,62 +55,77 @@ def create_angle_buckets(df, bucket_size):
     
     return df
 
-def create_scatter_plot(data, selected_metric, metrics):
-    """Create scatter plot with colored points by year and metric average line"""
-    # Create scatter plot with different colors by year
-    fig = px.scatter(
-        data,
-        x='ball_angle',
-        y=metrics[selected_metric],
-        color='year',  # Always color by year
-        title=f"{selected_metric} vs Arm Angle",
-        hover_data=['pitcher_name', 'year'],
-        color_discrete_sequence=px.colors.qualitative.Set1  # Use a nice color sequence
-    )
+def create_visualization(data, selected_metric, bucket_size=None, plot_type="Bar Chart"):
+    """Create visualization with official league averages"""
+    league_averages = {
+        'k_percent': {
+            '2020': 23.4, '2021': 23.2, '2022': 22.4, '2023': 22.7, '2024': 22.6
+        },
+        'bb_percent': {
+            '2020': 9.2, '2021': 8.7, '2022': 8.2, '2023': 8.6, '2024': 8.2
+        },
+        'barrel_percent': {
+            '2020': 7.6, '2021': 7.9, '2022': 7.5, '2023': 8.1, '2024': 7.8
+        },
+        'hard_hit_percent': {
+            '2020': 37.4, '2021': 38.5, '2022': 38.2, '2023': 39.2, '2024': 38.7
+        },
+        'xwoba': {
+            '2020': .323, '2021': .317, '2022': .309, '2023': .320, '2024': .312
+        }
+    }
     
-    # Add metric average line
-    metric_avg = data[metrics[selected_metric]].mean()
-    fig.add_hline(
-        y=metric_avg,
-        line_dash="dash",
-        line_color="red",
-        annotation_text=f"League Avg {selected_metric}: {metric_avg:.3f}",
-        annotation_position="bottom right"
-    )
+    metrics = {
+        'K%': 'k_percent',
+        'BB%': 'bb_percent',
+        'Whiff%': 'whiff_percent',
+        'Barrel%': 'barrel_percent',
+        'Hard Hit%': 'hard_hit_percent',
+        'xwOBA': 'xwoba'
+    }
     
-    # Update layout
-    fig.update_layout(
-        xaxis_title="Arm Angle (degrees)",
-        yaxis_title=selected_metric,
-        showlegend=True,
-        legend_title="Year"
-    )
+    if plot_type == "Bar Chart":
+        data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
+        bucket_stats = data_with_buckets.groupby('angle_bucket', observed=True).agg({
+            metrics[selected_metric]: ['mean', 'count']
+        }).reset_index()
+        bucket_stats.columns = ['angle_bucket', 'mean', 'count']
+        
+        fig = px.bar(
+            bucket_stats,
+            x='angle_bucket',
+            y='mean',
+            title=f"Average {selected_metric} by Arm Angle ({bucket_size}° buckets)"
+        )
+        fig.update_traces(marker_color='rgb(0, 116, 217)', showlegend=False)
+        
+        y_min = bucket_stats['mean'].min() * 0.98
+        y_max = bucket_stats['mean'].max() * 1.02
+        
+    else:  # Scatter Plot
+        fig = px.scatter(
+            data,
+            x='ball_angle',
+            y=metrics[selected_metric],
+            color='year',
+            title=f"{selected_metric} vs Arm Angle",
+            hover_data=['pitcher_name', 'year'],
+            color_discrete_sequence=px.colors.qualitative.Set1
+        )
+        
+        y_min = data[metrics[selected_metric]].min() * 0.98
+        y_max = data[metrics[selected_metric]].max() * 1.02
     
-    return fig
-
-def create_bar_chart(bucket_stats, selected_metric, bucket_size, data, metrics):
-    """Create bar chart with optimized visualization"""
-    y_min = bucket_stats['mean'].min() * 0.98
-    y_max = bucket_stats['mean'].max() * 1.02
-    
-    fig = px.bar(
-        bucket_stats,
-        x='angle_bucket',
-        y='mean',
-        title=f"Average {selected_metric} by Arm Angle ({bucket_size}° buckets)"
-    )
-    
-    fig.update_traces(
-        marker_color='rgb(0, 116, 217)',
-        showlegend=False
-    )
-    
-    league_avg = data[metrics[selected_metric]].mean()
+    # Get relevant league average based on selected years
+    years = list(data['year'].unique())
+    metric_key = metrics[selected_metric]
+    metric_averages = [league_averages[metric_key][year] for year in years]
+    league_avg = sum(metric_averages) / len(metric_averages)
     fig.add_hline(
         y=league_avg,
         line_dash="dash",
         line_color="red",
-        annotation_text=f"League Avg: {league_avg:.3f}",
+        annotation_text=f"League Avg: {league_avg:.3f}" if metric_key == 'xwoba' else f"League Avg: {league_avg:.1f}",
         annotation_position="bottom right"
     )
     
@@ -171,7 +134,7 @@ def create_bar_chart(bucket_stats, selected_metric, bucket_size, data, metrics):
         yaxis_title=selected_metric,
         yaxis=dict(
             range=[y_min, y_max],
-            tickformat='.3f'
+            tickformat='.3f' if metric_key == 'xwoba' else '.1f'
         ),
         plot_bgcolor='white'
     )
@@ -222,44 +185,13 @@ def main():
     
     data = data[data['year'].isin(selected_years)]
     
-    if plot_type == "Scatter":
-        fig = px.scatter(
-            data,
-            x='ball_angle',
-            y=metrics[selected_metric],
-            color='year',
-            title=f"{selected_metric} vs Arm Angle",
-            hover_data=['pitcher_name', 'year'],
-            color_discrete_sequence=px.colors.qualitative.Set1
-        )
-        
-        metric_avg = data[metrics[selected_metric]].mean()
-        fig.add_hline(
-            y=metric_avg,
-            line_dash="dash",
-            line_color="red",
-            annotation_text=f"League Avg {selected_metric}: {metric_avg:.3f}",
-            annotation_position="bottom right"
-        )
-        
-        fig.update_layout(
-            xaxis_title="Arm Angle (degrees)",
-            yaxis_title=selected_metric,
-            showlegend=True,
-            legend_title="Year"
-        )
-            
-    else:  # Bar Chart
-        try:
-            data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
-            bucket_stats = data_with_buckets.groupby('angle_bucket', observed=True).agg({
-                metrics[selected_metric]: ['mean', 'count']
-            }).reset_index()
-            bucket_stats.columns = ['angle_bucket', 'mean', 'count']
-            fig = create_bar_chart(bucket_stats, selected_metric, bucket_size, data, metrics)
-        except Exception as e:
-            st.error(f"Error creating bar chart: {str(e)}")
-            return
+    # Use the new create_visualization function
+    fig = create_visualization(
+        data, 
+        selected_metric, 
+        bucket_size=bucket_size, 
+        plot_type=plot_type
+    )
     
     # Display plot and handle clicks with increased selection radius
     selected_point = plotly_events(fig, click_event=True)
@@ -268,6 +200,8 @@ def main():
         st.subheader("Selected Pitcher(s)")
         if plot_type == "Bar Chart":
             bucket = selected_point[0]['x']
+            if 'data_with_buckets' not in locals():
+                data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
             selected_data = data_with_buckets[data_with_buckets['angle_bucket'] == bucket]
         else:
             clicked_x = selected_point[0]['x']
