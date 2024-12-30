@@ -16,7 +16,7 @@ def load_and_validate_data():
         'LH_Relievers': 'LeagueAvgLHRelievers.csv'
     }
     
-   def load_and_validate_data():
+def load_and_validate_data():
     """Load and validate data from processed directory"""
     data_path = Path("data/processed")
     league_avg_files = {
