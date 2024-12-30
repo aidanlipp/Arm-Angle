@@ -166,7 +166,7 @@ def main():
     with col3:
         bucket_size = st.selectbox("Bucket Size", [5, 10, 15]) if plot_type == "Bar Chart" else None
     
-    # Year selection - now using checkboxes for easier toggling
+    # Year selection
     st.subheader("Select Years")
     available_years = sorted(data['year'].unique())
     
@@ -184,6 +184,20 @@ def main():
         return
     
     data = data[data['year'].isin(selected_years)]
+    
+    # Add pitcher handedness filter
+    st.subheader("Filter by Pitcher Handedness")
+    handedness_options = ['L', 'R']  # Left-handed (L) or Right-handed (R)
+    selected_handedness = st.multiselect("Select Pitch Hand", handedness_options, default=handedness_options)
+    if selected_handedness:
+        data = data[data['pitch_hand'].isin(selected_handedness)]
+    
+    # Add role filter
+    st.subheader("Filter by Role")
+    role_options = ['Starter', 'Reliever']
+    selected_roles = st.multiselect("Select Role", role_options, default=role_options)
+    if selected_roles:
+        data = data[data['Role'].isin(selected_roles)]
     
     # Use the new create_visualization function
     fig = create_visualization(
@@ -209,12 +223,12 @@ def main():
             # Increased selection radius for easier point selection
             selection_radius = 1.0  # Increased from 0.5
             selected_data = data[
-                (abs(data['ball_angle'] - clicked_x) < selection_radius) &
+                (abs(data['ball_angle'] - clicked_x) < selection_radius) & 
                 (abs(data[metrics[selected_metric]] - clicked_y) < selection_radius)
             ]
         
         if not selected_data.empty:
-            display_cols = ['pitcher_name', 'year', 'ball_angle'] + list(metrics.values())
+            display_cols = ['pitcher_name', 'year', 'ball_angle', 'pitch_hand', 'Role'] + list(metrics.values())
             st.dataframe(
                 selected_data[display_cols]
                 .sort_values(['year', 'ball_angle'])
