@@ -9,16 +9,22 @@ from streamlit_plotly_events import plotly_events
 def load_and_validate_data():
     """Load and validate data from processed directory"""
     data_path = Path("data/processed")
-    dfs = []
+    league_avg_files = {
+        'RH_Starters': 'LeagueAvgRHStarters.csv',
+        'LH_Starters': 'LeagueAvgLHStarters.csv',
+        'RH_Relievers': 'LeagueAvgRHRelievers.csv',
+        'LH_Relievers': 'LeagueAvgLHRelievers.csv'
+    }
     
-    # Explicitly try to load each year
+    # Load player-level data
+    dfs = []
     for year in ['2020', '2021', '2022', '2023', '2024']:
-        short_year = year[-2:]  # Get last two digits
+        short_year = year[-2:]
         file_path = data_path / f'ArmAngles{short_year}_complete.csv'
         try:
             if file_path.exists():
                 df = pd.read_csv(file_path)
-                df['year'] = year  # Use full year string
+                df['year'] = year
                 dfs.append(df)
                 st.sidebar.success(f"✓ Loaded {year} data")
             else:
@@ -26,11 +32,24 @@ def load_and_validate_data():
         except Exception as e:
             st.sidebar.error(f"Error loading {year} data: {e}")
 
-    if not dfs:
-        return None
+    # Combine player-level data
+    player_data = pd.concat(dfs, ignore_index=True) if dfs else None
 
-    combined_df = pd.concat(dfs, ignore_index=True)
-    return combined_df
+    # Load league average data
+    league_data = {}
+    for key, file_name in league_avg_files.items():
+        try:
+            file_path = data_path / file_name
+            if file_path.exists():
+                league_data[key] = pd.read_csv(file_path)
+                st.sidebar.success(f"✓ Loaded {key} league averages")
+            else:
+                st.sidebar.warning(f"Missing: {file_name}")
+        except Exception as e:
+            st.sidebar.error(f"Error loading {key} league averages: {e}")
+
+    return player_data, league_data
+
 
 def create_angle_buckets(df, bucket_size):
     """Create angle buckets with proper error handling"""
@@ -55,30 +74,8 @@ def create_angle_buckets(df, bucket_size):
     
     return df
 
-def create_visualization(data, selected_metric, bucket_size=None, plot_type="Bar Chart"):
-    """Create visualization with official league averages"""
-    league_averages = {
-        'k_percent': {
-            '2020': 23.4, '2021': 23.2, '2022': 22.4, '2023': 22.7, '2024': 22.6
-        },
-        'bb_percent': {
-            '2020': 9.2, '2021': 8.7, '2022': 8.2, '2023': 8.6, '2024': 8.2
-        },
-        'barrel_percent': {
-            '2020': 7.6, '2021': 7.9, '2022': 7.5, '2023': 8.1, '2024': 7.8
-        },
-        'hard_hit_percent': {
-            '2020': 37.4, '2021': 38.5, '2022': 38.2, '2023': 39.2, '2024': 38.7
-        },
-        'xwoba': {
-            '2020': .323, '2021': .317, '2022': .309, '2023': .320, '2024': .312
-        },
-        'whiff_percent': {  # Added whiff_percent
-        '2020': 26.7, '2021': 26.0, '2022': 25.6, '2023': 25.8, '2024': 25.3
-
-        }
-    }
-    
+def create_visualization(data, league_data, selected_metric, bucket_size=None, plot_type="Bar Chart", handedness=None, role=None):
+    """Create visualization with accurate league averages"""
     metrics = {
         'K%': 'k_percent',
         'BB%': 'bb_percent',
@@ -88,6 +85,16 @@ def create_visualization(data, selected_metric, bucket_size=None, plot_type="Bar
         'xwOBA': 'xwoba'
     }
     
+    if handedness and role:
+        league_key = f"{handedness}_{role}s"
+        if league_key not in league_data:
+            st.error("League average data for this filter is unavailable.")
+            return None
+        league_averages = league_data[league_key]
+    else:
+        st.warning("Filters must include handedness and role.")
+        return None
+
     if plot_type == "Bar Chart":
         data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
         bucket_stats = data_with_buckets.groupby('angle_bucket', observed=True).agg({
@@ -102,10 +109,6 @@ def create_visualization(data, selected_metric, bucket_size=None, plot_type="Bar
             title=f"Average {selected_metric} by Arm Angle ({bucket_size}° buckets)"
         )
         fig.update_traces(marker_color='rgb(0, 116, 217)', showlegend=False)
-        
-        y_min = bucket_stats['mean'].min() * 0.98
-        y_max = bucket_stats['mean'].max() * 1.02
-        
     else:  # Scatter Plot
         fig = px.scatter(
             data,
@@ -116,39 +119,55 @@ def create_visualization(data, selected_metric, bucket_size=None, plot_type="Bar
             hover_data=['pitcher_name', 'year'],
             color_discrete_sequence=px.colors.qualitative.Set1
         )
-        
-        y_min = data[metrics[selected_metric]].min() * 0.98
-        y_max = data[metrics[selected_metric]].max() * 1.02
     
-    # Get relevant league average based on selected years
-    years = list(data['year'].unique())
+    # Add league average line
     metric_key = metrics[selected_metric]
-    metric_averages = [league_averages[metric_key][year] for year in years]
-    league_avg = sum(metric_averages) / len(metric_averages)
-    fig.add_hline(
-        y=league_avg,
-        line_dash="dash",
-        line_color="red",
-        annotation_text=f"League Avg: {league_avg:.3f}" if metric_key == 'xwoba' else f"League Avg: {league_avg:.1f}",
-        annotation_position="bottom right"
-    )
+    for year in sorted(data['year'].unique()):
+        league_avg = league_averages[league_averages['year'] == int(year)][metric_key].values[0]
+        fig.add_hline(
+            y=league_avg,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"{year} League Avg: {league_avg:.3f}" if metric_key == 'xwoba' else f"{year} League Avg: {league_avg:.1f}",
+            annotation_position="bottom right"
+        )
     
+    return fig
+    
+def create_league_comparison_graph(league_data, selected_metric):
+    """Create a league-level comparison graph across years"""
+    metrics = {
+        'K%': 'k_percent',
+        'BB%': 'bb_percent',
+        'Whiff%': 'whiff_percent',
+        'Barrel%': 'barrel_percent',
+        'Hard Hit%': 'hard_hit_percent',
+        'xwOBA': 'xwoba'
+    }
+
+    metric_key = metrics[selected_metric]
+    combined_league_data = pd.concat(league_data.values(), keys=league_data.keys(), names=['Group'])
+    combined_league_data = combined_league_data.reset_index()
+
+    fig = px.line(
+        combined_league_data,
+        x='year',
+        y=metric_key,
+        color='Group',
+        title=f"League Averages for {selected_metric} Over Years",
+        markers=True
+    )
     fig.update_layout(
-        xaxis_title="Arm Angle (degrees)",
+        xaxis_title="Year",
         yaxis_title=selected_metric,
-        yaxis=dict(
-            range=[y_min, y_max],
-            tickformat='.3f' if metric_key == 'xwoba' else '.1f'
-        ),
         plot_bgcolor='white'
     )
-    
     return fig
 
 def main():
     st.title("Pitcher Arm Angle Analysis")
     
-    data = load_and_validate_data()
+    data, league_data = load_and_validate_data()
     if data is None:
         st.error("No data available")
         return
@@ -169,78 +188,27 @@ def main():
         plot_type = st.selectbox("Plot Type", ["Bar Chart", "Scatter"])
     with col3:
         bucket_size = st.selectbox("Bucket Size", [5, 10, 15]) if plot_type == "Bar Chart" else None
-    
-    # Year selection
-    st.subheader("Select Years")
-    available_years = sorted(data['year'].unique())
-    
-    # Create columns for year checkboxes
-    year_cols = st.columns(len(available_years))
-    selected_years = []
-    
-    for idx, year in enumerate(available_years):
-        with year_cols[idx]:
-            if st.checkbox(year, value=True, key=f'year_{year}'):
-                selected_years.append(year)
-    
-    if not selected_years:
-        st.warning("Please select at least one year")
-        return
-    
-    data = data[data['year'].isin(selected_years)]
-    
-    # Add pitcher handedness filter
-    st.subheader("Filter by Pitcher Handedness")
-    handedness_options = ['L', 'R']  # Left-handed (L) or Right-handed (R)
-    selected_handedness = st.multiselect("Select Pitch Hand", handedness_options, default=handedness_options)
-    if selected_handedness:
-        data = data[data['pitch_hand'].isin(selected_handedness)]
-    
-    # Add role filter
-    st.subheader("Filter by Role")
-    role_options = ['Starter', 'Reliever']
-    selected_roles = st.multiselect("Select Role", role_options, default=role_options)
-    if selected_roles:
-        data = data[data['role'].isin(selected_roles)]
-    
-    # Use the new create_visualization function
-    fig = create_visualization(
-        data, 
-        selected_metric, 
-        bucket_size=bucket_size, 
-        plot_type=plot_type
-    )
-    
-    # Display plot and handle clicks with increased selection radius
-    selected_point = plotly_events(fig, click_event=True)
-    
-    if selected_point:
-        st.subheader("Selected Pitcher(s)")
-        if plot_type == "Bar Chart":
-            bucket = selected_point[0]['x']
-            if 'data_with_buckets' not in locals():
-                data_with_buckets = create_angle_buckets(data.copy(), bucket_size)
-            selected_data = data_with_buckets[data_with_buckets['angle_bucket'] == bucket]
-        else:
-            clicked_x = selected_point[0]['x']
-            clicked_y = selected_point[0]['y']
-            # Increased selection radius for easier point selection
-            selection_radius = 1.0  # Increased from 0.5
-            selected_data = data[
-                (abs(data['ball_angle'] - clicked_x) < selection_radius) & 
-                (abs(data[metrics[selected_metric]] - clicked_y) < selection_radius)
-            ]
-        
-        if not selected_data.empty:
-            display_cols = ['pitcher_name', 'year', 'ball_angle', 'pitch_hand', 'role'] + list(metrics.values())
-            st.dataframe(
-                selected_data[display_cols]
-                .sort_values(['year', 'ball_angle'])
-                .round(3)
-            )
-            
-            # Show how many pitchers were selected
-            st.caption(f"Found {len(selected_data)} pitcher(s) in this selection")
 
-if __name__ == "__main__":
-    main()
+    # Filters for handedness and role
+    st.subheader("Filter by Handedness and Role")
+    handedness = st.selectbox("Select Handedness", ['RH', 'LH'])
+    role = st.selectbox("Select Role", ['Starter', 'Reliever'])
+    
+    # Generate player-level graph
+    fig = create_visualization(
+        data[data['Role'] == role],
+        league_data,
+        selected_metric,
+        bucket_size=bucket_size,
+        plot_type=plot_type,
+        handedness=handedness,
+        role=role
+    )
+    if fig:
+        st.plotly_chart(fig)
+    
+    # Generate league comparison graph
+    st.subheader("League-Level Comparison")
+    league_fig = create_league_comparison_graph(league_data, selected_metric)
+    st.plotly_chart(league_fig)
+
