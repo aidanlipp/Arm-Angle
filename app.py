@@ -9,80 +9,54 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
-def get_league_averages():
-    """Get league-wide pitching stats from Baseball Savant"""
-    try:
-        league_stats = {}
-        
-        for year in range(2020, 2025):
-            # Baseball Savant league stats URL
-            url = f"https://baseballsavant.mlb.com/statcast_search/csv?all=true&hfPT=&hfAB=&hfBBT=&hfPR=&hfZ=&stadium=&hfBBL=&hfNewZones=&hfGT=R%7C&hfC=&hfSea={year}%7C&hfSit=&player_type=pitcher&hfOuts=&opponent=&pitcher_throws=&batter_stands=&hfSA=&team=&position=&hfRO=&home_road=&game_date_gt=&game_date_lt=&hfFlag=&hfInfield=&hfOutfield=&metric_1=&hfInn=&min_pitches=0&min_results=0&group_by=league&sort_col=pitch_count&player_event_sort=api_p_release_speed&sort_order=desc&min_pas=0&type=details"
-            
-            df = pd.read_csv(url)
-            
-            # Calculate league averages
-            if not df.empty:
-                league_stats[str(year)] = {
-                    'K%': (df['strikeout'].sum() / df['pa'].sum() * 100),
-                    'BB%': (df['walk'].sum() / df['pa'].sum() * 100),
-                    'Barrel%': (df['barrel'].sum() / df['balls_in_play'].sum() * 100),
-                    'Hard Hit%': (df['hard_hit'].sum() / df['balls_in_play'].sum() * 100)
-                }
-        
-        return league_stats
-    except Exception as e:
-        st.error(f"Error fetching league stats: {e}")
-        return None
-
-def validate_stats(our_data):
-    """Compare our calculated averages with league data"""
-    st.subheader("Stats Validation")
+def validate_league_stats(data):
+    """Compare stats with FanGraphs league averages"""
+    league_stats = {
+        '2020': {'K%': 23.4, 'BB%': 9.2, 'Barrel%': 7.6, 'HardHit%': 37.4},
+        '2021': {'K%': 23.2, 'BB%': 8.7, 'Barrel%': 7.9, 'HardHit%': 38.5},
+        '2022': {'K%': 22.4, 'BB%': 8.2, 'Barrel%': 7.5, 'HardHit%': 38.2},
+        '2023': {'K%': 22.7, 'BB%': 8.6, 'Barrel%': 8.1, 'HardHit%': 39.2},
+        '2024': {'K%': 22.6, 'BB%': 8.2, 'Barrel%': 7.8, 'HardHit%': 38.7}
+    }
     
-    with st.spinner("Fetching league averages..."):
-        league_avgs = get_league_averages()
+    st.subheader("Stats Validation Against FanGraphs")
     
-    if league_avgs:
-        comparison = []
-        metrics = {
-            'K%': 'k_percent',
-            'BB%': 'bb_percent',
-            'Barrel%': 'barrel_percent',
-            'Hard Hit%': 'hard_hit_percent'
-        }
-        
-        for year in our_data['year'].unique():
-            year_data = our_data[our_data['year'] == year]
-            if year in league_avgs:
-                row = {'Year': year}
-                
-                for metric_name, our_col in metrics.items():
-                    our_val = year_data[our_col].mean()
-                    league_val = league_avgs[year][metric_name]
-                    
-                    row.update({
-                        f'Our {metric_name}': round(our_val, 1),
-                        f'League {metric_name}': round(league_val, 1),
-                        f'{metric_name} Diff': round(abs(our_val - league_val), 1)
-                    })
-                
-                comparison.append(row)
-        
-        if comparison:
-            df_comparison = pd.DataFrame(comparison)
-            st.dataframe(df_comparison.style.highlight_grid(axis=0))
-            
-            # Highlight significant differences
-            for metric in metrics.keys():
-                diff_col = f'{metric} Diff'
-                significant_diff = df_comparison[df_comparison[diff_col] > 1.0]
-                if not significant_diff.empty:
-                    st.warning(f"Notable differences in {metric}")
-                    for _, row in significant_diff.iterrows():
-                        st.write(f"{row['Year']}: Our {metric}: {row[f'Our {metric}']}%, "
-                               f"League: {row[f'League {metric}']}%")
-    else:
-        st.error("Unable to fetch league averages for validation")
+    metrics = {
+        'K%': 'k_percent',
+        'BB%': 'bb_percent',
+        'Barrel%': 'barrel_percent',
+        'HardHit%': 'hard_hit_percent'
+    }
+    
+    comparison = []
+    for year in sorted(data['year'].unique()):
+        row = {'Year': year}
+        for metric, our_col in metrics.items():
+            our_val = data[data['year'] == year][our_col].mean()
+            fg_val = league_stats[year][metric]
+            row.update({
+                f'Our {metric}': round(our_val, 1),
+                f'FG {metric}': fg_val,
+                f'{metric} Diff': round(abs(our_val - fg_val), 1)
+            })
+        comparison.append(row)
+    
+    df_comparison = pd.DataFrame(comparison)
+    
+    # Display comparison
+    st.dataframe(df_comparison.style.highlight_grid())
+    
+    # Flag significant differences
+    for metric in metrics.keys():
+        large_diffs = df_comparison[df_comparison[f'{metric} Diff'] > 1.0]
+        if not large_diffs.empty:
+            st.warning(f"Notable differences in {metric}:")
+            for _, row in large_diffs.iterrows():
+                st.write(f"{row['Year']}: Our {row[f'Our {metric}']}% vs FanGraphs {row[f'FG {metric}']}%")
 
+# Add to main():
+if st.checkbox("Validate Stats"):
+    validate_league_stats(data)
 
 def load_and_validate_data():
     """Load and validate data from processed directory"""
