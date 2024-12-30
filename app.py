@@ -57,13 +57,13 @@ def load_and_validate_data():
                     df.rename(columns={'swing_miss_percent': 'whiff_percent'}, inplace=True)
                 league_data[key] = df
                 st.sidebar.success(f"✓ Loaded {key} league averages")
-                st.write(f"Columns for {key}: {df.columns.tolist()}")
             else:
                 st.sidebar.warning(f"Missing: {file_name}")
         except Exception as e:
             st.sidebar.error(f"Error loading {key} league averages: {e}")
 
     return player_data, league_data
+
 
 
 
