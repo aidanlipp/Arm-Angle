@@ -41,7 +41,11 @@ def load_and_validate_data():
         try:
             file_path = data_path / file_name
             if file_path.exists():
-                league_data[key] = pd.read_csv(file_path)
+                df = pd.read_csv(file_path)
+                # Rename 'swing_miss_percent' to 'whiff_percent'
+                if 'swing_miss_percent' in df.columns:
+                    df.rename(columns={'swing_miss_percent': 'whiff_percent'}, inplace=True)
+                league_data[key] = df
                 st.sidebar.success(f"✓ Loaded {key} league averages")
             else:
                 st.sidebar.warning(f"Missing: {file_name}")
@@ -49,6 +53,7 @@ def load_and_validate_data():
             st.sidebar.error(f"Error loading {key} league averages: {e}")
 
     return player_data, league_data
+
 
 
 def create_angle_buckets(df, bucket_size):
