@@ -24,7 +24,7 @@ overall_league_averages = {
         '2020': .323, '2021': .317, '2022': .309, '2023': .320, '2024': .312
     },
     'whiff_percent': {
-        '2020': 26.7, '2021': 26.0, '2022': 25.6, '2023': 25.8, '2024': 25.3
+        '2020': 24.5, '2021': 24.3, '2022': 24.0, '2023': 24.2, '2024': 24.1
     }
 }
 
@@ -78,7 +78,8 @@ def load_and_validate_data():
 
 def load_specific_averages():
     """Load specific league averages from CSV files"""
-    data_path = Path("data/league_averages")
+    # Look in the same directory as the player data files
+    data_path = Path("data/processed")
     specific_averages = {}
     
     for category in ['RHStarters', 'LHStarters', 'RHRelievers', 'LHRelievers']:
