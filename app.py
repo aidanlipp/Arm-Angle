@@ -25,6 +25,31 @@ overall_league_averages = {
     }
 }
 
+def load_and_validate_data():
+    """Load and validate data from processed directory"""
+    data_path = Path("data/processed")
+    dfs = []
+    
+    for year in ['2020', '2021', '2022', '2023', '2024']:
+        short_year = year[-2:]
+        file_path = data_path / f'ArmAngles{short_year}_complete.csv'
+        try:
+            if file_path.exists():
+                df = pd.read_csv(file_path)
+                df['year'] = year
+                dfs.append(df)
+                st.sidebar.success(f"✓ Loaded {year} data")
+            else:
+                st.sidebar.warning(f"Missing: ArmAngles{short_year}_complete.csv")
+        except Exception as e:
+            st.sidebar.error(f"Error loading {year} data: {e}")
+
+    if not dfs:
+        return None
+
+    combined_df = pd.concat(dfs, ignore_index=True)
+    return combined_df
+
 def load_specific_averages():
     """Load specific league averages from CSV files"""
     data_path = Path("data/league_averages")
