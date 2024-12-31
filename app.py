@@ -215,6 +215,68 @@ def create_visualization(data, selected_metric, specific_averages, bucket_size=N
     
     return fig
 
+def create_league_average_visualization(specific_averages, selected_metric, selected_years, selected_handedness=None, selected_roles=None):
+    """Create visualization for league average data"""
+    metrics = {
+        'K%': 'k_percent',
+        'BB%': 'bb_percent',
+        'Whiff%': 'whiff_percent',
+        'Barrel%': 'barrel_percent',
+        'Hard Hit%': 'hard_hit_percent',
+        'xwOBA': 'xwoba'
+    }
+    
+    metric_key = metrics[selected_metric]
+    
+    # Prepare data for plotting
+    data_points = []
+    for category, stats in specific_averages.items():
+        # Extract handedness and role from category
+        handedness = category[0:2]  # RH or LH
+        role = 'Starter' if 'Starters' in category else 'Reliever'
+        
+        # Apply filters
+        if selected_handedness and handedness not in selected_handedness:
+            continue
+        if selected_roles and role not in selected_roles:
+            continue
+            
+        if metric_key in stats:
+            for year, value in stats[metric_key].items():
+                if str(year) in selected_years:
+                    data_points.append({
+                        'Year': year,
+                        'Value': value,
+                        'Category': category,
+                        'Handedness': handedness,
+                        'Role': role
+                    })
+    
+    if not data_points:
+        return None
+        
+    df = pd.DataFrame(data_points)
+    
+    fig = px.line(
+        df,
+        x='Year',
+        y='Value',
+        color='Category',
+        title=f"League Average {selected_metric} by Year",
+        markers=True
+    )
+    
+    fig.update_layout(
+        xaxis_title="Year",
+        yaxis_title=selected_metric,
+        yaxis=dict(
+            tickformat='.3f' if metric_key == 'xwoba' else '.1f'
+        ),
+        plot_bgcolor='white'
+    )
+    
+    return fig
+
 def main():
     st.title("Pitcher Arm Angle Analysis")
     
