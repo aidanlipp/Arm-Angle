@@ -90,6 +90,7 @@ def load_specific_averages():
                 # Rename swing_miss_percent to whiff_percent
                 if 'swing_miss_percent' in df.columns:
                     df['whiff_percent'] = df['swing_miss_percent']
+                    if 'barrels_per_bbe_percent' in df.columns: df['barrel_percent'] = df['barrels_per_bbe_percent']
                 
                 yearly_stats = {}
                 for metric in ['k_percent', 'bb_percent', 'barrel_percent', 'hard_hit_percent', 'xwoba', 'whiff_percent']:
