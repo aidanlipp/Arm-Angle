@@ -197,7 +197,7 @@ def main():
     role_options = ['Starter', 'Reliever']
     selected_roles = st.multiselect("Select Role", role_options, default=role_options)
     if selected_roles:
-        data = data[data['Role'].isin(selected_roles)]
+        data = data[data['role'].isin(selected_roles)]
     
     # Use the new create_visualization function
     fig = create_visualization(
@@ -228,7 +228,7 @@ def main():
             ]
         
         if not selected_data.empty:
-            display_cols = ['pitcher_name', 'year', 'ball_angle', 'pitch_hand', 'Role'] + list(metrics.values())
+            display_cols = ['pitcher_name', 'year', 'ball_angle', 'pitch_hand', 'role'] + list(metrics.values())
             st.dataframe(
                 selected_data[display_cols]
                 .sort_values(['year', 'ball_angle'])
