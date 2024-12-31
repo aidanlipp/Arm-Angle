@@ -25,6 +25,29 @@ overall_league_averages = {
     }
 }
 
+def create_angle_buckets(df, bucket_size):
+    """Create angle buckets with proper error handling"""
+    if df.empty:
+        return df
+        
+    min_angle = df['ball_angle'].min()
+    max_angle = df['ball_angle'].max()
+    
+    min_edge = np.floor(min_angle / bucket_size) * bucket_size
+    max_edge = np.ceil(max_angle / bucket_size) * bucket_size
+    edges = np.arange(min_edge, max_edge + bucket_size, bucket_size)
+    
+    labels = [f"{edges[i]:.0f} to {edges[i+1]:.0f}" for i in range(len(edges)-1)]
+    
+    df['angle_bucket'] = pd.cut(
+        df['ball_angle'],
+        bins=edges,
+        labels=labels,
+        include_lowest=True
+    )
+    
+    return df
+
 def load_and_validate_data():
     """Load and validate data from processed directory"""
     data_path = Path("data/processed")
