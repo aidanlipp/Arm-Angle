@@ -83,8 +83,12 @@ def load_specific_averages():
         try:
             if file_path.exists():
                 df = pd.read_csv(file_path)
+                # Rename swing_miss_percent to whiff_percent
+                if 'swing_miss_percent' in df.columns:
+                    df['whiff_percent'] = df['swing_miss_percent']
+                
                 yearly_stats = {}
-                for metric in ['k_percent', 'bb_percent', 'barrel_percent', 'hard_hit_percent', 'xwoba']:
+                for metric in ['k_percent', 'bb_percent', 'barrel_percent', 'hard_hit_percent', 'xwoba', 'whiff_percent']:
                     yearly_stats[metric] = df.groupby('year')[metric].mean().to_dict()
                 specific_averages[category] = yearly_stats
                 st.sidebar.success(f"✓ Loaded {category} averages")
